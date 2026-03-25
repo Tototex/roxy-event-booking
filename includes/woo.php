@@ -99,6 +99,10 @@ function roxy_eb_display_cart_item_meta($item_data, $cart_item) {
         $item_data[] = ['name' => 'Pizza', 'value' => esc_html(intval($b['pizza_quantity'] ?? 0) . ' pizza(s)')];
         if (!empty($b['pizza_order_details'])) $item_data[] = ['name' => 'Pizza order', 'value' => esc_html($b['pizza_order_details'])];
     }
+    if (!empty($b['bulk_concessions_requested'])) {
+        $item_data[] = ['name' => 'Bulk popcorn', 'value' => esc_html(intval($b['bulk_popcorn_qty'] ?? 0))];
+        $item_data[] = ['name' => 'Bulk soda', 'value' => esc_html(intval($b['bulk_soda_qty'] ?? 0))];
+    }
     if (!empty($b['notes'])) $item_data[] = ['name' => 'Notes', 'value' => esc_html($b['notes'])];
     return $item_data;
 }
@@ -122,6 +126,8 @@ function roxy_eb_add_order_item_meta($item, $cart_item_key, $values, $order) {
         'Movie title' => !empty($b['movie_title']) ? sanitize_text_field($b['movie_title']) : '',
         'Pizza quantity' => !empty($b['pizza_requested']) ? (string) intval($b['pizza_quantity'] ?? 0) : '',
         'Pizza order' => !empty($b['pizza_requested']) ? sanitize_textarea_field($b['pizza_order_details'] ?? '') : '',
+        'Bulk popcorn' => !empty($b['bulk_concessions_requested']) ? (string) intval($b['bulk_popcorn_qty'] ?? 0) : '',
+        'Bulk soda' => !empty($b['bulk_concessions_requested']) ? (string) intval($b['bulk_soda_qty'] ?? 0) : '',
         'Notes' => !empty($b['notes']) ? sanitize_textarea_field($b['notes']) : '',
     ];
     foreach ($fields as $name => $value) {
@@ -292,7 +298,7 @@ function roxy_eb_normalize_booking_payload($payload) {
     $pizza_quantity = $pizza_requested ? max(1, intval($payload['pizza_quantity'] ?? 0)) : 0;
     $pizza_order_details = $pizza_requested ? sanitize_textarea_field($payload['pizza_order_details'] ?? '') : '';
     $pizza_total = $pizza_requested ? ($pizza_quantity * intval($settings['pizza_price'] ?? 18)) : 0;
-    $total = $base + $extra_price + $pizza_total;
+    $total = $base + $extra_price + $pizza_total + $bulk_concessions_total;
 
     return [
         'first_name' => $first,
@@ -322,7 +328,11 @@ function roxy_eb_normalize_booking_payload($payload) {
         'pizza_quantity' => $pizza_quantity,
         'pizza_order_details' => $pizza_order_details,
         'pizza_total' => $pizza_total,
-        'total_price' => $total,
+        'bulk_concessions_requested' => $bulk_requested,
+        'bulk_popcorn_qty' => $bulk_popcorn_qty,
+        'bulk_soda_qty' => $bulk_soda_qty,
+        'bulk_concessions_total' => $bulk_concessions_total,
+        'total_price' => $total + $bulk_concessions_total,
     ];
 }
 
@@ -367,6 +377,10 @@ function roxy_eb_create_booking_from_payload($payload, $order = null, $status = 
         'pizza_quantity' => intval($payload['pizza_quantity'] ?? 0),
         'pizza_order_details' => !empty($payload['pizza_order_details']) ? sanitize_textarea_field($payload['pizza_order_details']) : null,
         'pizza_total' => intval($payload['pizza_total'] ?? 0),
+        'bulk_concessions_requested' => !empty($payload['bulk_concessions_requested']) ? 1 : 0,
+        'bulk_popcorn_qty' => intval($payload['bulk_popcorn_qty'] ?? 0),
+        'bulk_soda_qty' => intval($payload['bulk_soda_qty'] ?? 0),
+        'bulk_concessions_total' => intval($payload['bulk_concessions_total'] ?? 0),
         'total_price' => intval($payload['total_price']),
         'woo_order_id' => $order ? intval($order->get_id()) : null,
         'sling_status' => 'unscheduled',
@@ -474,6 +488,10 @@ function roxy_eb_thankyou_booking_details($order_id) {
         echo '<li><strong>Pizza:</strong> ' . esc_html(intval($booking['pizza_quantity'])) . ' pizza(s)</li>';
         echo '<li><strong>Pizza order:</strong> ' . nl2br(esc_html($booking['pizza_order_details'])) . '</li>';
     }
+    if (!empty($booking['bulk_concessions_requested'])) {
+        echo '<li><strong>Bulk popcorn:</strong> ' . esc_html(intval($booking['bulk_popcorn_qty'])) . '</li>';
+        echo '<li><strong>Bulk soda:</strong> ' . esc_html(intval($booking['bulk_soda_qty'])) . '</li>';
+    }
     echo '</ul>';
     echo '<p><a href="' . esc_url(wc_get_account_endpoint_url('roxy-bookings')) . '">View or manage your bookings</a></p>';
     echo '</section>';
@@ -542,6 +560,6 @@ function roxy_eb_ajax_submit_invoice_booking() {
     $redirect = add_query_arg('roxy_eb_submitted', 'invoice', wp_get_referer() ?: home_url('/'));
     wp_send_json_success([
         'redirect' => $redirect,
-        'message' => 'Your booking request was submitted and your time has been reserved. We will follow up with invoice details shortly.',
+        'message' => 'Your booking request was received. We will follow up with invoice details.',
     ]);
 }

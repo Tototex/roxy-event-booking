@@ -61,6 +61,10 @@ function roxy_eb_install_schema() {
         pizza_total INT NOT NULL DEFAULT 0,
         pizza_checked_at DATETIME NULL,
         pizza_checked_by BIGINT UNSIGNED NULL,
+        bulk_concessions_requested TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        bulk_popcorn_qty INT UNSIGNED NOT NULL DEFAULT 0,
+        bulk_soda_qty INT UNSIGNED NOT NULL DEFAULT 0,
+        bulk_concessions_total INT NOT NULL DEFAULT 0,
         total_price INT NOT NULL DEFAULT 0,
         woo_order_id BIGINT UNSIGNED NULL,
         sling_shift_ids TEXT NULL,
@@ -77,7 +81,8 @@ function roxy_eb_install_schema() {
         KEY wp_user_id (wp_user_id),
         KEY pizza_requested (pizza_requested),
         KEY invoice_status (invoice_status),
-        KEY payment_method (payment_method)
+        KEY payment_method (payment_method),
+        KEY bulk_concessions_requested (bulk_concessions_requested)
     ) $charset;";
 
     $sql2 = "CREATE TABLE $blocks (

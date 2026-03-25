@@ -199,6 +199,18 @@ Notes:
 ", $pizza_lines) . ltrim($notes);
     }
 
+    if (!empty($booking['bulk_concessions_requested'])) {
+        $bulk_lines = [
+            '**Bulk Concessions Ordered**',
+            '',
+            'Bulk Popcorn: ' . intval($booking['bulk_popcorn_qty'] ?? 0),
+            'Bulk Soda: ' . intval($booking['bulk_soda_qty'] ?? 0),
+            'Bulk Concessions Total: $' . number_format((float)($booking['bulk_concessions_total'] ?? 0), 2),
+            '',
+        ];
+        $notes = implode("\n", $bulk_lines) . ltrim($notes);
+    }
+
     return [
         'action' => $action,
         'booking_id' => intval($booking['id']),
@@ -230,6 +242,10 @@ Notes:
             'pizza_order_details' => $booking['pizza_order_details'] ?? '',
             'pizza_total' => intval($booking['pizza_total'] ?? 0),
             'pizza_handled' => !empty($booking['pizza_checked_at']) ? 1 : 0,
+            'bulk_concessions_requested' => intval($booking['bulk_concessions_requested'] ?? 0),
+            'bulk_popcorn_qty' => intval($booking['bulk_popcorn_qty'] ?? 0),
+            'bulk_soda_qty' => intval($booking['bulk_soda_qty'] ?? 0),
+            'bulk_concessions_total' => intval($booking['bulk_concessions_total'] ?? 0),
         ],
         'sling' => [
             'location_label' => $settings['sling_location_label'] ?? '',

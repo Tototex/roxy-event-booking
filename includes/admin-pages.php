@@ -59,6 +59,7 @@ function roxy_eb_admin_settings_page() {
                 <tr><th scope="row">Base price (≥ 26 guests)</th><td>$ <input type="number" name="settings[base_price_over]" value="<?php echo esc_attr($settings['base_price_over']); ?>" min="0" /></td></tr>
                 <tr><th scope="row">Extra hour price</th><td>$ <input type="number" name="settings[extra_hour_price]" value="<?php echo esc_attr($settings['extra_hour_price']); ?>" min="0" /></td></tr>
                 <tr><th scope="row">Pizza price</th><td>$ <input type="number" name="settings[pizza_price]" value="<?php echo esc_attr($settings['pizza_price'] ?? 18); ?>" min="0" /></td></tr>
+                <tr><th scope="row">Bulk concession price</th><td>$ <input type="number" name="settings[bulk_item_price]" value="<?php echo esc_attr($settings['bulk_item_price'] ?? 3); ?>" min="0" /></td></tr>
                 <tr><th scope="row">Operating hours</th><td>Open <input type="text" name="settings[open_time]" value="<?php echo esc_attr($settings['open_time']); ?>" placeholder="08:00" /> Close <input type="text" name="settings[close_time]" value="<?php echo esc_attr($settings['close_time']); ?>" placeholder="24:00" /></td></tr>
                 <tr><th scope="row">Time increments</th><td><select name="settings[time_increment_minutes]"><?php foreach ([5,10,15,20,30,60] as $m): ?><option value="<?php echo esc_attr($m); ?>" <?php selected(intval($settings['time_increment_minutes']), $m); ?>><?php echo esc_html($m); ?> minutes</option><?php endforeach; ?></select></td></tr>
                 <tr><th scope="row">Booking product</th><td><input type="number" name="settings[booking_product_id]" value="<?php echo esc_attr($settings['booking_product_id']); ?>" min="0" /></td></tr>
@@ -196,6 +197,11 @@ function roxy_eb_admin_blocks_page() {
     <?php
 }
 
+function roxy_eb_valid_bulk_qty($qty) {
+    $qty = intval($qty);
+    return ($qty === 0 || ($qty >= 25 && $qty <= 250));
+}
+
 function roxy_eb_mark_pizza_handled($booking_id, $handled) {
     $booking_id = intval($booking_id);
     if ($booking_id <= 0) return;
@@ -264,10 +270,19 @@ function roxy_eb_admin_bookings_page() {
                 if ($customer_type !== 'business') { $customer_type = 'personal'; $business_name = ''; $payment_method = 'pay_now'; }
                 $invoice_status = sanitize_text_field($_POST['invoice_status'] ?? ($booking_before['invoice_status'] ?? 'not_needed'));
                 if (!in_array($invoice_status, ['not_needed','pending','sent','paid','void'], true)) $invoice_status = 'not_needed';
+                $settings_now = roxy_eb_get_settings();
                 $pizza_requested = !empty($_POST['pizza_requested']) ? 1 : 0;
                 $pizza_quantity = $pizza_requested ? max(1, intval($_POST['pizza_quantity'] ?? 1)) : 0;
                 $pizza_order_details = $pizza_requested ? sanitize_textarea_field($_POST['pizza_order_details'] ?? '') : '';
-                $pizza_total = $pizza_requested ? ($pizza_quantity * intval(roxy_eb_get_settings()['pizza_price'] ?? 18)) : 0;
+                $pizza_total = $pizza_requested ? ($pizza_quantity * intval($settings_now['pizza_price'] ?? 18)) : 0;
+                $bulk_concessions_requested = !empty($_POST['bulk_concessions_requested']) ? 1 : 0;
+                $bulk_popcorn_qty = $bulk_concessions_requested ? intval($_POST['bulk_popcorn_qty'] ?? 0) : 0;
+                $bulk_soda_qty = $bulk_concessions_requested ? intval($_POST['bulk_soda_qty'] ?? 0) : 0;
+                if ($bulk_concessions_requested && (!roxy_eb_valid_bulk_qty($bulk_popcorn_qty) || !roxy_eb_valid_bulk_qty($bulk_soda_qty))) {
+                    echo '<div class="notice notice-error"><p>Bulk concessions must be 0, or between 25 and 250 for each item.</p></div>';
+                    return;
+                }
+                $bulk_concessions_total = $bulk_concessions_requested ? (($bulk_popcorn_qty + $bulk_soda_qty) * intval($settings_now['bulk_item_price'] ?? 3)) : 0;
                 $send_email = !empty($_POST['email_customer']);
 
                 $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i', $date . ' ' . $time, $tz);
@@ -282,7 +297,7 @@ function roxy_eb_admin_bookings_page() {
                     } else {
                         $base_price = intval($booking_before['base_price']);
                         $extra_price = $extra_hours * intval(roxy_eb_get_settings()['extra_hour_price'] ?? 100);
-                        $total_price = $base_price + $extra_price + $pizza_total;
+$total_price = $base_price + $extra_price + $pizza_total + $bulk_concessions_total;
 
                         $update = [
                             'guest_count' => $guest_count,
@@ -375,6 +390,9 @@ if (isset($_GET['roxy_eb_action']) && $_GET['roxy_eb_action'] === 'edit' && isse
                 <tr><th scope="row">Pizza requested</th><td><label><input type="checkbox" name="pizza_requested" value="1" <?php checked(!empty($b['pizza_requested'])); ?>> Pizza included</label></td></tr>
                 <tr><th scope="row"><label for="pizza_quantity">Pizza quantity</label></th><td><input type="number" min="0" id="pizza_quantity" name="pizza_quantity" value="<?php echo esc_attr(intval($b['pizza_quantity'] ?? 0)); ?>"></td></tr>
                 <tr><th scope="row"><label for="pizza_order_details">Pizza order</label></th><td><textarea id="pizza_order_details" name="pizza_order_details" rows="4" style="width:420px;max-width:100%;"><?php echo esc_textarea($b['pizza_order_details'] ?? ''); ?></textarea></td></tr>
+                <tr><th scope="row">Bulk concessions requested</th><td><label><input type="checkbox" name="bulk_concessions_requested" value="1" <?php checked(!empty($b['bulk_concessions_requested'])); ?>> Bulk concessions included</label><p class="description">Each item must be 0, or 25 to 250.</p></td></tr>
+                <tr><th scope="row"><label for="bulk_popcorn_qty">Bulk popcorn qty</label></th><td><input type="number" min="0" max="250" id="bulk_popcorn_qty" name="bulk_popcorn_qty" value="<?php echo esc_attr(intval($b['bulk_popcorn_qty'] ?? 0)); ?>"></td></tr>
+                <tr><th scope="row"><label for="bulk_soda_qty">Bulk soda qty</label></th><td><input type="number" min="0" max="250" id="bulk_soda_qty" name="bulk_soda_qty" value="<?php echo esc_attr(intval($b['bulk_soda_qty'] ?? 0)); ?>"></td></tr>
                 <tr><th scope="row">Pizza handled</th><td><label><input type="checkbox" name="pizza_handled" value="1" <?php checked(!empty($b['pizza_checked_at'])); ?>> Mark pizza handled</label><?php if (!empty($b['pizza_checked_at'])): ?><p class="description">Handled at <?php echo esc_html($b['pizza_checked_at']); ?></p><?php endif; ?></td></tr>
                 <tr><th scope="row"><label for="notes_admin">Event notes</label></th><td><textarea id="notes_admin" name="notes_admin" rows="3" style="width:420px;max-width:100%;"><?php echo esc_textarea($b['notes_admin'] ?? ''); ?></textarea></td></tr>
                 <tr><th scope="row">Notify customer</th><td><label><input type="checkbox" name="email_customer" value="1"> Email customer about this change</label></td></tr>

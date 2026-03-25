@@ -110,6 +110,10 @@ function roxy_eb_booking_rows_for_email($booking) {
         $rows[] = ['Pizza quantity', intval($booking['pizza_quantity'])];
         $rows[] = ['Pizza order', $booking['pizza_order_details']];
     }
+    if (!empty($booking['bulk_concessions_requested'])) {
+        $rows[] = ['Bulk popcorn', intval($booking['bulk_popcorn_qty'])];
+        $rows[] = ['Bulk soda', intval($booking['bulk_soda_qty'])];
+    }
     if (!empty($booking['notes_admin'])) $rows[] = ['Notes', $booking['notes_admin']];
     $rows[] = ['Visibility', ucfirst($booking['visibility'])];
     return $rows;
@@ -119,11 +123,13 @@ function roxy_eb_booking_pricing_rows($booking) {
     $base  = (float)($booking['base_price'] ?? 0);
     $extra = (float)($booking['extra_price'] ?? 0);
     $pizza = (float)($booking['pizza_total'] ?? 0);
+    $bulk = (float)($booking['bulk_concessions_total'] ?? 0);
     $total = (float)($booking['total_price'] ?? 0);
     return [
         ['Base', '$' . number_format($base, 2)],
         ['Extra hours', '$' . number_format($extra, 2)],
         ['Pizza', '$' . number_format($pizza, 2)],
+        ['Bulk concessions', '$' . number_format($bulk, 2)],
         [($booking['payment_method'] === 'invoice' ? 'Total due' : 'Total paid'), '$' . number_format($total, 2)],
     ];
 }

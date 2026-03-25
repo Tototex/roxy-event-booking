@@ -25,6 +25,7 @@ function roxy_eb_register_shortcodes() {
             'closeTime' => $settings['close_time'],
             'guestCap' => intval($settings['guest_cap']),
             'pizzaPrice' => intval($settings['pizza_price'] ?? 18),
+            'bulkItemPrice' => intval($settings['bulk_item_price'] ?? 3),
             'prices' => [
                 'under' => intval($settings['base_price_under']),
                 'over' => intval($settings['base_price_over']),
@@ -178,6 +179,26 @@ function roxy_eb_shortcode_calendar() {
                         <label class="roxy-eb-span-2" id="roxy-eb-pizza-details-wrap" style="display:none;">
                             <span>Pizza order details *</span>
                             <textarea name="pizza_order_details" rows="3" placeholder="Tell us toppings and how many of each. Large pizzas only, 2 toppings or less."></textarea>
+                        </label>
+
+                        <label>
+                            <span>Bulk concessions? *</span>
+                            <select name="bulk_concessions_requested" id="roxy-eb-bulk-concessions-requested">
+                                <option value="0">No</option>
+                                <option value="1">Yes</option>
+                            </select>
+                        </label>
+
+                        <label id="roxy-eb-bulk-popcorn-wrap" style="display:none;">
+                            <span>Bulk popcorn quantity</span>
+                            <input type="number" name="bulk_popcorn_qty" min="0" max="250" value="0" />
+                            <small class="roxy-eb-help">$3 per popcorn. Enter 0, or 25 to 250.</small>
+                        </label>
+
+                        <label id="roxy-eb-bulk-soda-wrap" style="display:none;">
+                            <span>Bulk soda quantity</span>
+                            <input type="number" name="bulk_soda_qty" min="0" max="250" value="0" />
+                            <small class="roxy-eb-help">$3 per soda. Enter 0, or 25 to 250.</small>
                         </label>
 
                         <label class="roxy-eb-span-2">

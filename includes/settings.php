@@ -13,6 +13,7 @@ function roxy_eb_defaults() {
         'base_price_over'  => 300,
         'extra_hour_price' => 100,
         'pizza_price' => 18,
+        'bulk_item_price' => 3,
         'open_time' => '08:00',
         'close_time' => '24:00',
         'time_increment_minutes' => 15,
@@ -65,6 +66,11 @@ Pizza handled: {PIZZA_STATUS}
 Pizza order:
 {PIZZA_ORDER}
 
+Bulk concessions: {BULK_CONCESSIONS_REQUESTED}
+Bulk popcorn: {BULK_POPCORN_QTY}
+Bulk soda: {BULK_SODA_QTY}
+Bulk concessions total: {BULK_CONCESSIONS_TOTAL}
+
 Notes:
 {NOTES}",
     ];
@@ -94,6 +100,7 @@ function roxy_eb_update_settings($new) {
     $clean['base_price_over']  = max(0, intval($new['base_price_over']  ?? $defaults['base_price_over']));
     $clean['extra_hour_price'] = max(0, intval($new['extra_hour_price'] ?? $defaults['extra_hour_price']));
     $clean['pizza_price'] = max(0, intval($new['pizza_price'] ?? $defaults['pizza_price']));
+    $clean['bulk_item_price'] = max(0, intval($new['bulk_item_price'] ?? $defaults['bulk_item_price']));
 
     $clean['open_time']  = preg_match('/^\d{2}:\d{2}$/', $new['open_time'] ?? '') ? $new['open_time'] : $defaults['open_time'];
     $clean['close_time'] = preg_match('/^\d{2}:\d{2}$/', $new['close_time'] ?? '') ? $new['close_time'] : $defaults['close_time'];

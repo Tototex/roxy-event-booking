@@ -57,7 +57,12 @@
     return options;
   }
 
-  function computePricing(guestCount, extraHours, pizzaRequested, pizzaQuantity){
+  function validBulkQty(n){
+    n = Number(n||0);
+    return n === 0 || (n >= 25 && n <= 250);
+  }
+
+  function computePricing(guestCount, extraHours, pizzaRequested, pizzaQuantity, bulkRequested, bulkPopcornQty, bulkSodaQty){
     guestCount = Number(guestCount||0);
     extraHours = Number(extraHours||0);
     pizzaRequested = Number(pizzaRequested||0);
@@ -65,7 +70,8 @@
     var base = guestCount <= 25 ? Number(RoxyEB.prices.under) : Number(RoxyEB.prices.over);
     var extra = extraHours * Number(RoxyEB.prices.extra);
     var pizza = pizzaRequested ? pizzaQuantity * Number(RoxyEB.pizzaPrice || 18) : 0;
-    return {base: base, extra: extra, pizza: pizza, total: base + extra + pizza};
+    var bulk = bulkRequested ? (Number(bulkPopcornQty||0) + Number(bulkSodaQty||0)) * Number(RoxyEB.bulkItemPrice || 3) : 0;
+    return {base: base, extra: extra, pizza: pizza, bulk: bulk, total: base + extra + pizza + bulk};
   }
 
   function updateSubmitButton(){
@@ -152,7 +158,10 @@
       visibility: $('#roxy-eb-visibility').val(),
       pizza_requested: $('#roxy-eb-pizza-requested').val(),
       pizza_quantity: $('input[name="pizza_quantity"]').val(),
-      pizza_order_details: $('textarea[name="pizza_order_details"]').val().trim()
+      pizza_order_details: $('textarea[name="pizza_order_details"]').val().trim(),
+      bulk_concessions_requested: $('#roxy-eb-bulk-concessions-requested').val(),
+      bulk_popcorn_qty: $('input[name="bulk_popcorn_qty"]').val(),
+      bulk_soda_qty: $('input[name="bulk_soda_qty"]').val()
     };
   }
 
@@ -161,9 +170,12 @@
     var extraHours = Number($('#roxy-eb-extra-hours').val() || 0);
     var pizzaRequested = Number($('#roxy-eb-pizza-requested').val() || 0);
     var pizzaQuantity = Number($('input[name="pizza_quantity"]').val() || 0);
+    var bulkRequested = Number($('#roxy-eb-bulk-concessions-requested').val() || 0);
+    var bulkPopcornQty = Number($('input[name="bulk_popcorn_qty"]').val() || 0);
+    var bulkSodaQty = Number($('input[name="bulk_soda_qty"]').val() || 0);
     var customerType = $('#roxy-eb-customer-type').val();
     var paymentMethod = customerType === 'business' ? $('#roxy-eb-payment-method').val() : 'pay_now';
-    var p = computePricing(guestCount || 1, extraHours, pizzaRequested, pizzaRequested ? (pizzaQuantity || 1) : 0);
+    var p = computePricing(guestCount || 1, extraHours, pizzaRequested, pizzaRequested ? (pizzaQuantity || 1) : 0, bulkRequested, bulkPopcornQty, bulkSodaQty);
 
     $('#roxy-eb-pricing').html(
       '<div><strong>' + (paymentMethod === 'invoice' ? 'Estimated total to invoice:' : 'Estimated total:') + '</strong> ' + formatMoney(p.total) + '</div>' +
@@ -204,6 +216,12 @@
     $('#roxy-eb-pizza-details-wrap').toggle(pizza);
   }
 
+  function toggleBulkConcessionsFields(){
+    var bulk = $('#roxy-eb-bulk-concessions-requested').val() === '1';
+    $('#roxy-eb-bulk-popcorn-wrap').toggle(bulk);
+    $('#roxy-eb-bulk-soda-wrap').toggle(bulk);
+  }
+
   function fetchBlocks(startISO, endISO){
     return $.getJSON(RoxyEB.ajaxUrl, {
       action: 'roxy_eb_calendar_blocks',
@@ -233,13 +251,15 @@
     $(document).on('click', '[data-roxy-eb-close]', function(){ closeModal(); });
     $(document).on('keydown', function(e){ if(e.key === 'Escape') closeModal(); });
 
-    $(document).on('change', '#roxy-eb-extra-hours, input[name="guest_count"], #roxy-eb-pizza-requested, input[name="pizza_quantity"], #roxy-eb-payment-method', updatePricingUI);
+    $(document).on('change', '#roxy-eb-extra-hours, input[name="guest_count"], #roxy-eb-pizza-requested, input[name="pizza_quantity"], #roxy-eb-payment-method, #roxy-eb-bulk-concessions-requested, input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', updatePricingUI);
     $(document).on('change', '#roxy-eb-event-format', function(){ toggleFormatFields(); });
     $(document).on('change', '#roxy-eb-customer-type', function(){ toggleCustomerFields(); updatePricingUI(); });
     $(document).on('change', '#roxy-eb-pizza-requested', function(){ togglePizzaFields(); updatePricingUI(); });
+    $(document).on('change', '#roxy-eb-bulk-concessions-requested', function(){ toggleBulkConcessionsFields(); updatePricingUI(); });
     toggleFormatFields();
     toggleCustomerFields();
     togglePizzaFields();
+    toggleBulkConcessionsFields();
     updatePricingUI();
 
     $('#roxy-eb-form').on('submit', function(e){
@@ -249,7 +269,15 @@
         $('#roxy-eb-error').show().text('Please select a date and time.');
         return;
       }
+      var bulkRequested = String(booking.bulk_concessions_requested || '0') === '1';
+      var bulkPopcornQty = Number(booking.bulk_popcorn_qty || 0);
+      var bulkSodaQty = Number(booking.bulk_soda_qty || 0);
+      if (bulkRequested && (!validBulkQty(bulkPopcornQty) || !validBulkQty(bulkSodaQty))) {
+        $('#roxy-eb-error').show().text('Bulk concessions must be 0, or between 25 and 250 for each item.');
+        return;
+      }
       $('#roxy-eb-error').hide().text('');
+      $('#roxy-eb-success').hide();
       $('#roxy-eb-submit-btn').prop('disabled', true).text('Working...');
 
       var action = (booking.customer_type === 'business' && booking.payment_method === 'invoice') ? 'roxy_eb_submit_invoice_booking' : 'roxy_eb_start_booking';
@@ -263,8 +291,16 @@
             $('#roxy-eb-success').show();
             return;
           }
-          if (resp && resp.success && resp.data && resp.data.redirect){ window.location.href = resp.data.redirect; }
-          else {
+          if (resp && resp.success && resp.data && resp.data.redirect){
+            if (action === 'roxy_eb_submit_invoice_booking') {
+              $('#roxy-eb-form').hide();
+              $('#roxy-eb-success-message').html('<strong>Booking request submitted.</strong> Your time has been reserved. We will follow up with invoice details.');
+              $('#roxy-eb-success').show();
+              setTimeout(function(){ window.location.href = resp.data.redirect; }, 1600);
+            } else {
+              window.location.href = resp.data.redirect;
+            }
+          } else {
             var msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Could not continue.';
             $('#roxy-eb-error').show().text(msg);
           }
