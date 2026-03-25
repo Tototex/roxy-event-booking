@@ -5,6 +5,7 @@
  * Version: 1.4.5
  * Author: Newport Roxy (AI Team)
  * Text Domain: roxy-event-booking
+ * Update URI: https://github.com/Tototex/roxy-event-booking
  */
 
 if (!defined('ABSPATH')) exit;
