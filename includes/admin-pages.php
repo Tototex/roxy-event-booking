@@ -220,6 +220,18 @@ function roxy_eb_mark_pizza_handled($booking_id, $handled) {
     }
 }
 
+function roxy_eb_is_booking_archived($booking, ?DateTimeImmutable $now = null) {
+    if (!is_array($booking) || empty($booking['doors_close_at'])) return false;
+    try {
+        $close = roxy_eb_mysql_to_dt($booking['doors_close_at']);
+    } catch (Throwable $e) {
+        return false;
+    }
+    if (!$close) return false;
+    if (!$now) $now = new DateTimeImmutable('now', wp_timezone());
+    return $now >= $close->modify('+4 hours');
+}
+
 function roxy_eb_admin_bookings_page() {
     if (!current_user_can('manage_options')) return;
 
@@ -297,7 +309,7 @@ function roxy_eb_admin_bookings_page() {
                     } else {
                         $base_price = intval($booking_before['base_price']);
                         $extra_price = $extra_hours * intval(roxy_eb_get_settings()['extra_hour_price'] ?? 100);
-$total_price = $base_price + $extra_price + $pizza_total + $bulk_concessions_total;
+                        $total_price = $base_price + $extra_price + $pizza_total + $bulk_concessions_total;
 
                         $update = [
                             'guest_count' => $guest_count,
@@ -319,6 +331,10 @@ $total_price = $base_price + $extra_price + $pizza_total + $bulk_concessions_tot
                             'pizza_quantity' => $pizza_quantity,
                             'pizza_order_details' => $pizza_requested ? $pizza_order_details : null,
                             'pizza_total' => $pizza_total,
+                            'bulk_concessions_requested' => $bulk_concessions_requested,
+                            'bulk_popcorn_qty' => $bulk_popcorn_qty,
+                            'bulk_soda_qty' => $bulk_soda_qty,
+                            'bulk_concessions_total' => $bulk_concessions_total,
                             'extra_price' => $extra_price,
                             'total_price' => $total_price,
                         ];
@@ -354,13 +370,31 @@ $total_price = $base_price + $extra_price + $pizza_total + $bulk_concessions_tot
     }
 
     $tz = wp_timezone();
-    $start = (new DateTimeImmutable('now', $tz))->modify('-30 days');
-    $end   = (new DateTimeImmutable('now', $tz))->modify('+365 days');
+    $now = new DateTimeImmutable('now', $tz);
+    $show_archived = !empty($_GET['show_archived']);
+    $start = $now->modify('-30 days');
+    $end   = $now->modify('+365 days');
     $rows = roxy_eb_repo_list_bookings_in_range(roxy_eb_datetime_to_mysql($start), roxy_eb_datetime_to_mysql($end));
+    $display_rows = [];
+    foreach ($rows as $r) {
+        $booking = roxy_eb_repo_get_booking($r['id']);
+        if (!$booking) continue;
+        $booking['_is_archived'] = roxy_eb_is_booking_archived($booking, $now);
+        if (!$show_archived && $booking['_is_archived']) continue;
+        $display_rows[] = $booking;
+    }
     ?>
     <div class="wrap">
         <h1>Bookings</h1>
-        <p>Confirmed and invoice-pending bookings. Pizza reminders run until pizza is marked handled.</p>
+        <p>Confirmed and invoice-pending bookings. Pizza reminders run until pizza is marked handled. Bookings are hidden from this list 4 hours after doors close unless you show archived.</p>
+
+        <form method="get" style="margin:12px 0 16px;">
+            <input type="hidden" name="page" value="roxy-eb" />
+            <label>
+                <input type="checkbox" name="show_archived" value="1" <?php checked($show_archived); ?> onchange="this.form.submit()">
+                Show archived
+            </label>
+        </form>
 <?php
 if (isset($_GET['roxy_eb_action']) && $_GET['roxy_eb_action'] === 'edit' && isset($_GET['booking_id'])):
     $edit_id = intval($_GET['booking_id']);
@@ -397,7 +431,7 @@ if (isset($_GET['roxy_eb_action']) && $_GET['roxy_eb_action'] === 'edit' && isse
                 <tr><th scope="row"><label for="notes_admin">Event notes</label></th><td><textarea id="notes_admin" name="notes_admin" rows="3" style="width:420px;max-width:100%;"><?php echo esc_textarea($b['notes_admin'] ?? ''); ?></textarea></td></tr>
                 <tr><th scope="row">Notify customer</th><td><label><input type="checkbox" name="email_customer" value="1"> Email customer about this change</label></td></tr>
             </table>
-            <p><button type="submit" class="button button-primary">Save changes</button> <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=roxy-eb')); ?>">Done</a></p>
+            <p><button type="submit" class="button button-primary">Save changes</button> <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=roxy-eb' . ($show_archived ? '&show_archived=1' : ''))); ?>">Done</a></p>
         </form>
     </div>
 <?php endif; endif; ?>
@@ -415,10 +449,10 @@ if (isset($_GET['roxy_eb_action']) && $_GET['roxy_eb_action'] === 'edit' && isse
                 <th>Actions</th>
             </tr></thead>
             <tbody>
-                <?php if (empty($rows)): ?>
+                <?php if (empty($display_rows)): ?>
                     <tr><td colspan="9">No bookings found.</td></tr>
-                <?php else: foreach ($rows as $r): $booking = roxy_eb_repo_get_booking($r['id']); $dur = 2 + intval($booking['extra_hours']); $ss = $booking['sling_status'] ?? ''; if ($ss === 'ok') $ss = 'scheduled'; ?>
-                    <tr>
+                <?php else: foreach ($display_rows as $booking): $dur = 2 + intval($booking['extra_hours']); $ss = $booking['sling_status'] ?? ''; if ($ss === 'ok') $ss = 'scheduled'; ?>
+                    <tr<?php echo !empty($booking['_is_archived']) ? ' style="opacity:.75;"' : ''; ?>>
                         <td><?php echo esc_html($booking['doors_open_at']); ?></td>
                         <td><?php echo esc_html(trim($booking['customer_first_name'] . ' ' . $booking['customer_last_name'])); ?><br><small><?php echo esc_html($booking['customer_email']); ?></small><?php if (!empty($booking['business_name'])): ?><br><small><?php echo esc_html($booking['business_name']); ?></small><?php endif; ?></td>
                         <td><?php echo esc_html(($booking['payment_method'] === 'invoice') ? 'Invoice' : 'Pay now'); ?><?php if (($booking['payment_method'] ?? '') === 'invoice'): ?><br><small><?php echo esc_html(ucfirst($booking['invoice_status'] ?? 'pending')); ?></small><?php endif; ?></td>
@@ -436,16 +470,23 @@ if (isset($_GET['roxy_eb_action']) && $_GET['roxy_eb_action'] === 'edit' && isse
                         </td>
                         <td><?php echo esc_html(intval($booking['guest_count'])); ?></td>
                         <td><?php echo esc_html($dur . 'h'); ?></td>
-                        <td><?php echo esc_html($booking['status']); ?></td>
+                        <td>
+                            <?php echo esc_html($booking['status']); ?>
+                            <?php if (!empty($booking['_is_archived'])): ?><br><small>Archived</small><?php endif; ?>
+                        </td>
                         <td><?php echo esc_html($ss ?: '—'); ?></td>
                         <td>
+                            <?php
+                                $base_args = ['page' => 'roxy-eb'];
+                                if ($show_archived) $base_args['show_archived'] = 1;
+                            ?>
                             <?php if ($booking['status'] !== 'cancelled'): ?>
-                                <?php $editUrl = add_query_arg(['page' => 'roxy-eb', 'roxy_eb_action' => 'edit', 'booking_id' => intval($booking['id'])], admin_url('admin.php')); ?>
+                                <?php $editUrl = add_query_arg(array_merge($base_args, ['roxy_eb_action' => 'edit', 'booking_id' => intval($booking['id'])]), admin_url('admin.php')); ?>
                                 <a class="button" href="<?php echo esc_url($editUrl); ?>">Edit</a>
-                                <?php $cancelUrl = add_query_arg(['page' => 'roxy-eb', 'roxy_eb_action' => 'cancel', 'booking_id' => intval($booking['id']), '_wpnonce' => wp_create_nonce('roxy_eb_admin_cancel_' . intval($booking['id']))], admin_url('admin.php')); ?>
+                                <?php $cancelUrl = add_query_arg(array_merge($base_args, ['roxy_eb_action' => 'cancel', 'booking_id' => intval($booking['id']), '_wpnonce' => wp_create_nonce('roxy_eb_admin_cancel_' . intval($booking['id']))]), admin_url('admin.php')); ?>
                                 <a class="button" href="<?php echo esc_url($cancelUrl); ?>" onclick="return confirm('Cancel this booking?');">Cancel</a>
                                 <?php if (($ss === 'error' || $ss === 'failed')): ?>
-                                    <?php $retryUrl = add_query_arg(['page' => 'roxy-eb', 'roxy_eb_action' => 'retry_sling', 'booking_id' => intval($booking['id']), '_wpnonce' => wp_create_nonce('roxy_eb_admin_retry_sling_' . intval($booking['id']))], admin_url('admin.php')); ?>
+                                    <?php $retryUrl = add_query_arg(array_merge($base_args, ['roxy_eb_action' => 'retry_sling', 'booking_id' => intval($booking['id']), '_wpnonce' => wp_create_nonce('roxy_eb_admin_retry_sling_' . intval($booking['id']))]), admin_url('admin.php')); ?>
                                     <a class="button" href="<?php echo esc_url($retryUrl); ?>">Retry Sling Sync</a>
                                 <?php endif; ?>
                             <?php else: ?>—<?php endif; ?>
