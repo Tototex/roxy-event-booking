@@ -1,0 +1,24 @@
+Release workflow for Tototex/roxy-event-booking
+
+What it does
+- Runs on push to main
+- Reads version from roxy-event-booking.php
+- Verifies plugin header version matches ROXY_EB_VERSION
+- Checks latest GitHub release
+- Creates a new tag/release only when pushed version is higher
+- Builds a release zip with a proper roxy-event-booking/ parent folder
+- Attaches the zip to the GitHub release
+
+Your workflow
+1. Edit files locally
+2. Bump version in roxy-event-booking.php
+3. Commit in GitHub Desktop
+4. Push
+5. GitHub makes the release automatically
+
+First test
+- Bump from current version to next version
+- Push to main
+- Watch Actions tab
+- Confirm a new release appears with a zip attached
+- Confirm WordPress sees the update
