@@ -6,7 +6,6 @@ function roxy_eb_now_mysql() {
 }
 
 function roxy_eb_datetime_to_mysql($dt) {
-    // $dt is DateTimeImmutable in site timezone
     return $dt->format('Y-m-d H:i:s');
 }
 
@@ -29,6 +28,10 @@ function roxy_eb_repo_insert_booking($data) {
         'customer_last_name' => '',
         'customer_email' => '',
         'customer_phone' => '',
+        'customer_type' => 'personal',
+        'business_name' => null,
+        'payment_method' => 'pay_now',
+        'invoice_status' => 'not_needed',
         'guest_count' => 0,
         'tier' => '',
         'staff_shifts_required' => 1,
@@ -44,6 +47,12 @@ function roxy_eb_repo_insert_booking($data) {
         'extra_hours' => 0,
         'base_price' => 0,
         'extra_price' => 0,
+        'pizza_requested' => 0,
+        'pizza_quantity' => 0,
+        'pizza_order_details' => null,
+        'pizza_total' => 0,
+        'pizza_checked_at' => null,
+        'pizza_checked_by' => null,
         'total_price' => 0,
         'woo_order_id' => null,
         'sling_shift_ids' => null,
@@ -53,7 +62,7 @@ function roxy_eb_repo_insert_booking($data) {
     ];
     $row = array_merge($defaults, $data);
 
-    $ok = $wpdb->insert($table, $row, array_fill(0, count($row), '%s'));
+    $ok = $wpdb->insert($table, $row);
     if (!$ok) return new WP_Error('db_insert_failed', $wpdb->last_error);
 
     return intval($wpdb->insert_id);
@@ -104,10 +113,10 @@ function roxy_eb_repo_list_bookings_for_user($wp_user_id, $email) {
 function roxy_eb_repo_list_bookings_in_range($start_mysql, $end_mysql) {
     global $wpdb;
     $table = roxy_eb_table_bookings();
-    // overlap: reserved_start < end AND reserved_end > start
     $rows = $wpdb->get_results($wpdb->prepare(
-        "SELECT id,status,reserved_start_at,reserved_end_at,doors_open_at,doors_close_at,visibility,customer_last_name,guest_count FROM $table
-         WHERE status IN ('confirmed','pending')
+        "SELECT id,status,reserved_start_at,reserved_end_at,doors_open_at,doors_close_at,visibility,customer_last_name,guest_count
+         FROM $table
+         WHERE status IN ('confirmed','pending','pending_invoice')
          AND reserved_start_at < %s AND reserved_end_at > %s
          ORDER BY reserved_start_at ASC",
         $end_mysql, $start_mysql
@@ -115,7 +124,6 @@ function roxy_eb_repo_list_bookings_in_range($start_mysql, $end_mysql) {
     return $rows ?: [];
 }
 
-/** Blocks CRUD */
 function roxy_eb_repo_insert_block($data) {
     global $wpdb;
     $table = roxy_eb_table_blocks();
@@ -132,7 +140,7 @@ function roxy_eb_repo_insert_block($data) {
         'created_by' => get_current_user_id() ?: null,
     ];
     $row = array_merge($defaults, $data);
-    $ok = $wpdb->insert($table, $row, array_fill(0, count($row), '%s'));
+    $ok = $wpdb->insert($table, $row);
     if (!$ok) return new WP_Error('db_insert_failed', $wpdb->last_error);
     return intval($wpdb->insert_id);
 }
@@ -166,10 +174,6 @@ function roxy_eb_repo_list_blocks_in_range($start_mysql, $end_mysql) {
     return $rows ?: [];
 }
 
-// -----------------------------------------------------------------------------
-// Sling logs
-// -----------------------------------------------------------------------------
-
 function roxy_eb_repo_insert_sling_log($data) {
     global $wpdb;
     $table = roxy_eb_table_sling_logs();
@@ -186,7 +190,6 @@ function roxy_eb_repo_insert_sling_log($data) {
         'response_body' => isset($data['response_body']) ? (string)$data['response_body'] : null,
     ];
 
-    // Avoid storing secrets: redact Authorization-like values if present.
     foreach (['request_json','response_body'] as $k) {
         if (!empty($row[$k])) {
             $row[$k] = preg_replace('/Authorization\s*[:=]\s*[^"\s]+/i', 'Authorization: [REDACTED]', $row[$k]);

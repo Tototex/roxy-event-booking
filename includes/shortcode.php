@@ -5,12 +5,10 @@ function roxy_eb_register_shortcodes() {
     add_shortcode('roxy_booking_calendar', 'roxy_eb_shortcode_calendar');
 
     add_action('wp_enqueue_scripts', function () {
-        // Only enqueue when shortcode present (best-effort)
         if (!is_singular()) return;
         global $post;
         if (!$post || strpos($post->post_content, '[roxy_booking_calendar') === false) return;
 
-        // FullCalendar via CDN (keeps plugin lightweight)
         wp_enqueue_style('roxy-eb-fullcalendar', 'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css', [], ROXY_EB_VERSION);
         wp_enqueue_script('roxy-eb-fullcalendar', 'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js', [], ROXY_EB_VERSION, true);
 
@@ -26,6 +24,7 @@ function roxy_eb_register_shortcodes() {
             'openTime' => $settings['open_time'],
             'closeTime' => $settings['close_time'],
             'guestCap' => intval($settings['guest_cap']),
+            'pizzaPrice' => intval($settings['pizza_price'] ?? 18),
             'prices' => [
                 'under' => intval($settings['base_price_under']),
                 'over' => intval($settings['base_price_over']),
@@ -42,6 +41,9 @@ function roxy_eb_register_shortcodes() {
 
 function roxy_eb_shortcode_calendar() {
     ob_start();
+    if (!empty($_GET['roxy_eb_submitted']) && $_GET['roxy_eb_submitted'] === 'invoice') {
+        echo '<div class="roxy-eb-alert roxy-eb-alert--success"><div><strong>Booking request received.</strong> We will follow up with invoice details.</div></div>';
+    }
     ?>
     <div class="roxy-eb-wrap">
         <div class="roxy-eb-header">
@@ -88,6 +90,27 @@ function roxy_eb_shortcode_calendar() {
                         <label>
                             <span>Phone *</span>
                             <input type="tel" name="phone" required />
+                        </label>
+
+                        <label>
+                            <span>Personal or business? *</span>
+                            <select name="customer_type" id="roxy-eb-customer-type" required>
+                                <option value="personal">Personal</option>
+                                <option value="business">Business</option>
+                            </select>
+                        </label>
+
+                        <label id="roxy-eb-business-name-wrap" style="display:none;">
+                            <span>Business name *</span>
+                            <input type="text" name="business_name" />
+                        </label>
+
+                        <label id="roxy-eb-payment-method-wrap" style="display:none;">
+                            <span>Payment method *</span>
+                            <select name="payment_method" id="roxy-eb-payment-method">
+                                <option value="pay_now">Pay now</option>
+                                <option value="invoice">Invoice me</option>
+                            </select>
                         </label>
 
                         <label>
@@ -138,6 +161,25 @@ function roxy_eb_shortcode_calendar() {
                             <textarea name="live_description" rows="3"></textarea>
                         </label>
 
+                        <label>
+                            <span>Add pizza? *</span>
+                            <select name="pizza_requested" id="roxy-eb-pizza-requested">
+                                <option value="0">No</option>
+                                <option value="1">Yes</option>
+                            </select>
+                        </label>
+
+                        <label id="roxy-eb-pizza-quantity-wrap" style="display:none;">
+                            <span>Pizza quantity *</span>
+                            <input type="number" name="pizza_quantity" min="1" value="1" />
+                            <small class="roxy-eb-help">Large only. We recommend 1 pizza for every 4 people.</small>
+                        </label>
+
+                        <label class="roxy-eb-span-2" id="roxy-eb-pizza-details-wrap" style="display:none;">
+                            <span>Pizza order details *</span>
+                            <textarea name="pizza_order_details" rows="3" placeholder="Tell us toppings and how many of each. Large pizzas only, 2 toppings or less."></textarea>
+                        </label>
+
                         <label class="roxy-eb-span-2">
                             <span>Event notes (optional)</span>
                             <textarea name="notes" rows="3" placeholder="Anything we should know? (seating requests, special instructions, etc.)"></textarea>
@@ -157,7 +199,7 @@ function roxy_eb_shortcode_calendar() {
 
                     <div class="roxy-eb-actions">
                         <button type="button" class="roxy-eb-btn roxy-eb-btn--ghost" data-roxy-eb-close>Cancel</button>
-                        <button type="submit" class="roxy-eb-btn roxy-eb-btn--primary">Continue to checkout</button>
+                        <button type="submit" class="roxy-eb-btn roxy-eb-btn--primary" id="roxy-eb-submit-btn">Continue to checkout</button>
                     </div>
 
                     <div class="roxy-eb-error" id="roxy-eb-error" style="display:none;"></div>

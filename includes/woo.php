@@ -3,21 +3,10 @@ if (!defined('ABSPATH')) exit;
 
 function roxy_eb_booking_meta_key() { return '_roxy_eb_booking'; }
 
-/**
- * Ensure WooCommerce core and cart/session are available for frontend AJAX flows.
- * Some setups do not initialize the cart on admin-ajax requests by default.
- */
 function roxy_eb_wc_ready(): bool {
-    // Detect Woo in a resilient way
-    if (!function_exists('WC') && !class_exists('WooCommerce') && !defined('WC_VERSION')) {
-        return false;
-    }
-    if (!function_exists('WC')) {
-        // Woo should define WC(); if not, we can't reliably proceed.
-        return false;
-    }
+    if (!function_exists('WC') && !class_exists('WooCommerce') && !defined('WC_VERSION')) return false;
+    if (!function_exists('WC')) return false;
 
-    // Load cart helpers if missing
     if (!function_exists('wc_load_cart') && defined('WC_ABSPATH')) {
         $cartFns = WC_ABSPATH . 'includes/wc-cart-functions.php';
         $noticeFns = WC_ABSPATH . 'includes/wc-notice-functions.php';
@@ -25,19 +14,13 @@ function roxy_eb_wc_ready(): bool {
         if (file_exists($noticeFns)) include_once $noticeFns;
     }
 
-    // Ensure session/cart exist
     try {
-        if (function_exists('wc_load_cart')) {
-            wc_load_cart();
-        }
-    } catch (Throwable $e) {
-        // Fall through and let checks below decide
-    }
+        if (function_exists('wc_load_cart')) wc_load_cart();
+    } catch (Throwable $e) {}
 
     $wc = WC();
     if (!$wc) return false;
 
-    // Some environments may still not create cart; try initialize_cart if available.
     if (empty($wc->cart) && method_exists($wc, 'initialize_cart')) {
         try { $wc->initialize_cart(); } catch (Throwable $e) {}
     }
@@ -45,46 +28,29 @@ function roxy_eb_wc_ready(): bool {
     return !empty(WC()->cart);
 }
 
-
 function roxy_eb_register_woo_hooks() {
-    // Frontend submit handler
     add_action('wp_ajax_roxy_eb_start_booking', 'roxy_eb_ajax_start_booking');
     add_action('wp_ajax_nopriv_roxy_eb_start_booking', 'roxy_eb_ajax_start_booking');
 
-    // Validate cart item
-    add_filter('woocommerce_add_cart_item_data', function ($cart_item_data, $product_id, $variation_id) {
-        // We add cart item directly in AJAX; nothing here.
-        return $cart_item_data;
-    }, 10, 3);
+    add_action('wp_ajax_roxy_eb_submit_invoice_booking', 'roxy_eb_ajax_submit_invoice_booking');
+    add_action('wp_ajax_nopriv_roxy_eb_submit_invoice_booking', 'roxy_eb_ajax_submit_invoice_booking');
 
     add_filter('woocommerce_get_item_data', 'roxy_eb_display_cart_item_meta', 10, 2);
-
     add_action('woocommerce_checkout_create_order_line_item', 'roxy_eb_add_order_item_meta', 10, 4);
-
     add_action('woocommerce_before_calculate_totals', 'roxy_eb_apply_dynamic_price', 20, 1);
-
     add_action('woocommerce_checkout_process', 'roxy_eb_validate_checkout_slot');
-
     add_action('woocommerce_payment_complete', 'roxy_eb_on_payment_complete', 10, 1);
-
     add_action('woocommerce_thankyou', 'roxy_eb_thankyou_booking_details', 20, 1);
-
-    // If an order is refunded, cancel the related booking so the slot opens up again.
     add_action('woocommerce_order_refunded', 'roxy_eb_on_order_refunded', 10, 2);
     add_action('woocommerce_order_status_refunded', 'roxy_eb_on_order_status_refunded', 10, 2);
-
-    // Hide internal/legacy booking JSON from item meta display.
     add_filter('woocommerce_order_item_get_formatted_meta_data', 'roxy_eb_filter_formatted_item_meta', 10, 2);
 }
 
 function roxy_eb_filter_formatted_item_meta($formatted_meta, $item) {
     if (empty($formatted_meta) || !is_array($formatted_meta)) return $formatted_meta;
-
     foreach ($formatted_meta as $k => $meta) {
         $key = is_object($meta) && isset($meta->key) ? (string)$meta->key : '';
-        if ($key === 'Roxy Booking Data' || $key === '_roxy_eb_booking') {
-            unset($formatted_meta[$k]);
-        }
+        if ($key === 'Roxy Booking Data' || $key === '_roxy_eb_booking') unset($formatted_meta[$k]);
     }
     return $formatted_meta;
 }
@@ -96,32 +62,26 @@ function roxy_eb_on_order_status_refunded($order_id, $order = null) {
 function roxy_eb_on_order_refunded($order_id, $refund_id) {
     $order = function_exists('wc_get_order') ? wc_get_order($order_id) : null;
     if (!$order) return;
-
-    // Only cancel when the order is effectively fully refunded.
-    // (Avoid canceling reservations on partial refunds.)
-    $total          = (float) $order->get_total();
+    $total = (float) $order->get_total();
     $refunded_total = (float) $order->get_total_refunded();
     $is_fully_refunded = ($order->has_status('refunded') || ($total > 0 && ($refunded_total + 0.0001) >= $total));
     if (!$is_fully_refunded) return;
-
     roxy_eb_maybe_cancel_booking_for_order($order_id);
 }
 
 function roxy_eb_maybe_cancel_booking_for_order($order_id) {
     $order_id = intval($order_id);
     if ($order_id <= 0) return;
-
-    if (!function_exists('roxy_eb_repo_get_booking_by_order')) return;
     $booking = roxy_eb_repo_get_booking_by_order($order_id);
     if (!$booking) return;
-    if (($booking['status'] ?? '') !== 'confirmed') return;
+    if (($booking['status'] ?? '') === 'cancelled') return;
 
-    // Cancel without enforcing customer lead time (this is tied to payment/refund state).
     if (function_exists('roxy_eb_cancel_booking')) {
         roxy_eb_cancel_booking(intval($booking['id']), 'admin');
     } else {
         roxy_eb_repo_update_booking(intval($booking['id']), ['status' => 'cancelled']);
     }
+    roxy_eb_clear_pizza_reminders(intval($booking['id']));
 }
 
 function roxy_eb_display_cart_item_meta($item_data, $cart_item) {
@@ -130,11 +90,16 @@ function roxy_eb_display_cart_item_meta($item_data, $cart_item) {
     $item_data[] = ['name' => 'Doors open', 'value' => esc_html($b['doors_open_local'] ?? '')];
     $item_data[] = ['name' => 'Duration', 'value' => esc_html(($b['guest_hours'] ?? '') . ' hours')];
     $item_data[] = ['name' => 'Guests', 'value' => esc_html($b['guest_count'] ?? '')];
+    $item_data[] = ['name' => 'Customer type', 'value' => esc_html(ucfirst($b['customer_type'] ?? 'personal'))];
+    if (!empty($b['business_name'])) $item_data[] = ['name' => 'Business', 'value' => esc_html($b['business_name'])];
+    $item_data[] = ['name' => 'Payment method', 'value' => esc_html(($b['payment_method'] ?? 'pay_now') === 'invoice' ? 'Invoice' : 'Pay now')];
     $item_data[] = ['name' => 'Type', 'value' => esc_html(ucfirst($b['event_format'] ?? ''))];
     $item_data[] = ['name' => 'Visibility', 'value' => esc_html(ucfirst($b['visibility'] ?? ''))];
-    if (!empty($b['notes'])) {
-        $item_data[] = ['name' => 'Notes', 'value' => esc_html($b['notes'])];
+    if (!empty($b['pizza_requested'])) {
+        $item_data[] = ['name' => 'Pizza', 'value' => esc_html(intval($b['pizza_quantity'] ?? 0) . ' pizza(s)')];
+        if (!empty($b['pizza_order_details'])) $item_data[] = ['name' => 'Pizza order', 'value' => esc_html($b['pizza_order_details'])];
     }
+    if (!empty($b['notes'])) $item_data[] = ['name' => 'Notes', 'value' => esc_html($b['notes'])];
     return $item_data;
 }
 
@@ -142,30 +107,26 @@ function roxy_eb_add_order_item_meta($item, $cart_item_key, $values, $order) {
     if (empty($values[roxy_eb_booking_meta_key()])) return;
     $b = $values[roxy_eb_booking_meta_key()];
 
-    // Store full booking payload under a hidden meta key (used for processing/integrations).
-    // Leading underscore keeps it hidden from most customer-facing views.
     $item->add_meta_data('_roxy_eb_booking', wp_json_encode($b), true);
 
-    // Customer/admin-friendly receipt fields (no JSON blob).
-    $doors_open = $b['doors_open_local'] ?? '';
-    $show_start = !empty($b['show_start_at'])
-        ? date_i18n('l, F j, Y g:i A', strtotime($b['show_start_at']))
-        : '';
-    $duration = !empty($b['guest_hours']) ? intval($b['guest_hours']) . ' hours' : '';
-    $guests = isset($b['guest_count']) ? intval($b['guest_count']) : '';
-    $visibility = !empty($b['visibility']) ? ucfirst(sanitize_text_field($b['visibility'])) : '';
-    $type = !empty($b['event_format']) ? ucfirst(sanitize_text_field($b['event_format'])) : '';
-    $movie = !empty($b['movie_title']) ? sanitize_text_field($b['movie_title']) : '';
-    $notes = !empty($b['notes']) ? sanitize_textarea_field($b['notes']) : '';
-
-    $item->add_meta_data('Doors open', $doors_open, true);
-    if (!empty($show_start)) $item->add_meta_data('Show starts', $show_start, true);
-    if (!empty($duration)) $item->add_meta_data('Duration', $duration, true);
-    if ($guests !== '') $item->add_meta_data('Guests', (string)$guests, true);
-    if (!empty($type)) $item->add_meta_data('Type', $type, true);
-    if (!empty($visibility)) $item->add_meta_data('Visibility', $visibility, true);
-    if (!empty($movie) && strtolower($type) === 'movie') $item->add_meta_data('Movie title', $movie, true);
-    if (!empty($notes)) $item->add_meta_data('Notes', $notes, true);
+    $fields = [
+        'Doors open' => $b['doors_open_local'] ?? '',
+        'Show starts' => !empty($b['show_start_at']) ? date_i18n('l, F j, Y g:i A', strtotime($b['show_start_at'])) : '',
+        'Duration' => !empty($b['guest_hours']) ? intval($b['guest_hours']) . ' hours' : '',
+        'Guests' => isset($b['guest_count']) ? (string) intval($b['guest_count']) : '',
+        'Customer type' => !empty($b['customer_type']) ? ucfirst($b['customer_type']) : '',
+        'Business name' => sanitize_text_field($b['business_name'] ?? ''),
+        'Payment method' => (($b['payment_method'] ?? 'pay_now') === 'invoice' ? 'Invoice' : 'Pay now'),
+        'Type' => !empty($b['event_format']) ? ucfirst(sanitize_text_field($b['event_format'])) : '',
+        'Visibility' => !empty($b['visibility']) ? ucfirst(sanitize_text_field($b['visibility'])) : '',
+        'Movie title' => !empty($b['movie_title']) ? sanitize_text_field($b['movie_title']) : '',
+        'Pizza quantity' => !empty($b['pizza_requested']) ? (string) intval($b['pizza_quantity'] ?? 0) : '',
+        'Pizza order' => !empty($b['pizza_requested']) ? sanitize_textarea_field($b['pizza_order_details'] ?? '') : '',
+        'Notes' => !empty($b['notes']) ? sanitize_textarea_field($b['notes']) : '',
+    ];
+    foreach ($fields as $name => $value) {
+        if ($value !== '') $item->add_meta_data($name, $value, true);
+    }
 }
 
 function roxy_eb_apply_dynamic_price($cart) {
@@ -201,17 +162,17 @@ function roxy_eb_validate_checkout_slot() {
             wc_add_notice('Booking data missing. Please start your booking again.', 'error');
             return;
         }
-
-        $tz = wp_timezone();
-        try {
-            $doorsOpen = new DateTimeImmutable($b['doors_open_at'], $tz);
-            $extraHours = intval($b['extra_hours']);
-        } catch (Exception $e) {
-            wc_add_notice('Invalid booking time. Please start your booking again.', 'error');
+        $validation = roxy_eb_validate_booking_payload($b);
+        if (is_wp_error($validation)) {
+            wc_add_notice($validation->get_error_message(), 'error');
             return;
         }
 
+        $tz = wp_timezone();
+        $doorsOpen = new DateTimeImmutable($b['doors_open_at'], $tz);
+        $extraHours = intval($b['extra_hours']);
         $calc = roxy_eb_calc_times($doorsOpen, $extraHours);
+
         if (!roxy_eb_check_lead_time($doorsOpen)) {
             wc_add_notice('Bookings must be made at least 48 hours in advance. Please contact us for sooner bookings.', 'error');
             return;
@@ -220,13 +181,11 @@ function roxy_eb_validate_checkout_slot() {
             wc_add_notice('Selected time is outside operating hours.', 'error');
             return;
         }
-
         if (!roxy_eb_is_slot_available($calc['reserved_start'], $calc['reserved_end'])) {
             wc_add_notice('Sorry — that time is no longer available. Please pick another slot.', 'error');
             return;
         }
 
-        // Validate required contact fields are present in checkout billing
         $email = WC()->checkout()->get_value('billing_email');
         $phone = WC()->checkout()->get_value('billing_phone');
         if (empty($email) || empty($phone)) {
@@ -234,6 +193,195 @@ function roxy_eb_validate_checkout_slot() {
             return;
         }
     }
+}
+
+function roxy_eb_validate_booking_payload($payload) {
+    $settings = roxy_eb_get_settings();
+    $errors = [];
+
+    $first = sanitize_text_field($payload['first_name'] ?? '');
+    $last = sanitize_text_field($payload['last_name'] ?? '');
+    $email = sanitize_email($payload['email'] ?? '');
+    $phone = sanitize_text_field($payload['phone'] ?? '');
+
+    if ($first === '') $errors[] = 'First name is required.';
+    if ($last === '') $errors[] = 'Last name is required.';
+    if (!$email || !is_email($email)) $errors[] = 'Valid email is required.';
+    if ($phone === '') $errors[] = 'Phone number is required.';
+
+    $guest_count = intval($payload['guest_count'] ?? 0);
+    if ($guest_count < 1 || $guest_count > intval($settings['guest_cap'] ?? 250)) $errors[] = 'Guest count is invalid.';
+
+    $customer_type = sanitize_text_field($payload['customer_type'] ?? 'personal');
+    if (!in_array($customer_type, ['personal', 'business'], true)) $errors[] = 'Invalid customer type.';
+
+    $business_name = sanitize_text_field($payload['business_name'] ?? '');
+    if ($customer_type === 'business' && $business_name === '') $errors[] = 'Business name is required.';
+
+    $payment_method = sanitize_text_field($payload['payment_method'] ?? 'pay_now');
+    if ($customer_type === 'personal') $payment_method = 'pay_now';
+    if (!in_array($payment_method, ['pay_now', 'invoice'], true)) $errors[] = 'Invalid payment method.';
+    if ($customer_type !== 'business' && $payment_method === 'invoice') $errors[] = 'Invoice is only available for business bookings.';
+
+    $event_format = sanitize_text_field($payload['event_format'] ?? 'movie');
+    if (!in_array($event_format, ['movie', 'live'], true)) $errors[] = 'Invalid event format.';
+
+    $visibility = sanitize_text_field($payload['visibility'] ?? 'private');
+    if (!in_array($visibility, ['private', 'public'], true)) $errors[] = 'Invalid visibility setting.';
+
+    if ($event_format === 'movie' && sanitize_text_field($payload['movie_title'] ?? '') === '') $errors[] = 'Movie title is required.';
+    if ($event_format === 'live' && sanitize_textarea_field($payload['live_description'] ?? '') === '') $errors[] = 'Live event description is required.';
+
+    $pizza_requested = !empty($payload['pizza_requested']) ? 1 : 0;
+    $pizza_quantity = intval($payload['pizza_quantity'] ?? 0);
+    $pizza_order_details = sanitize_textarea_field($payload['pizza_order_details'] ?? '');
+    if ($pizza_requested) {
+        if ($pizza_quantity < 1) $errors[] = 'Pizza quantity is required.';
+        if ($pizza_order_details === '') $errors[] = 'Pizza order details are required.';
+    }
+
+    $doors_open = sanitize_text_field($payload['doors_open_at'] ?? '');
+    $tz = wp_timezone();
+    try {
+        $doorsOpen = new DateTimeImmutable($doors_open, $tz);
+    } catch (Exception $e) {
+        $doorsOpen = null;
+        $errors[] = 'Invalid start time.';
+    }
+
+    if ($doorsOpen) {
+        $calc = roxy_eb_calc_times($doorsOpen, max(0, intval($payload['extra_hours'] ?? 0)));
+        $inc = intval($settings['time_increment_minutes'] ?? 15);
+        $minute = intval($doorsOpen->format('i'));
+        if (($minute % $inc) !== 0) $errors[] = 'Start times must be in ' . $inc . '-minute increments.';
+        if (!roxy_eb_check_lead_time($doorsOpen)) $errors[] = 'Bookings must be made at least ' . intval($settings['lead_time_hours']) . ' hours in advance.';
+        if (!roxy_eb_time_within_operating_hours($doorsOpen, intval($calc['guest_hours']))) $errors[] = 'Selected time is outside operating hours.';
+        if (!roxy_eb_is_slot_available($calc['reserved_start'], $calc['reserved_end'])) $errors[] = 'That time is not available.';
+    }
+
+    if ($errors) return new WP_Error('invalid_booking', implode(' ', $errors));
+    return true;
+}
+
+function roxy_eb_normalize_booking_payload($payload) {
+    $settings = roxy_eb_get_settings();
+    $tz = wp_timezone();
+
+    $first = sanitize_text_field($payload['first_name'] ?? '');
+    $last = sanitize_text_field($payload['last_name'] ?? '');
+    $email = sanitize_email($payload['email'] ?? '');
+    $phone = sanitize_text_field($payload['phone'] ?? '');
+    $guest_count = intval($payload['guest_count'] ?? 0);
+    $customer_type = sanitize_text_field($payload['customer_type'] ?? 'personal');
+    $business_name = sanitize_text_field($payload['business_name'] ?? '');
+    $payment_method = sanitize_text_field($payload['payment_method'] ?? 'pay_now');
+    if ($customer_type === 'personal') $payment_method = 'pay_now';
+
+    $event_format = sanitize_text_field($payload['event_format'] ?? 'movie');
+    $visibility = sanitize_text_field($payload['visibility'] ?? 'private');
+    $movie_title = sanitize_text_field($payload['movie_title'] ?? '');
+    $live_desc = sanitize_textarea_field($payload['live_description'] ?? '');
+    $notes = sanitize_textarea_field($payload['notes'] ?? '');
+    $extra_hours = max(0, intval($payload['extra_hours'] ?? 0));
+    $doorsOpen = new DateTimeImmutable(sanitize_text_field($payload['doors_open_at'] ?? ''), $tz);
+    $calc = roxy_eb_calc_times($doorsOpen, $extra_hours);
+
+    $base = ($guest_count <= 25) ? intval($settings['base_price_under']) : intval($settings['base_price_over']);
+    $extra_price = $extra_hours * intval($settings['extra_hour_price']);
+    $pizza_requested = !empty($payload['pizza_requested']) ? 1 : 0;
+    $pizza_quantity = $pizza_requested ? max(1, intval($payload['pizza_quantity'] ?? 0)) : 0;
+    $pizza_order_details = $pizza_requested ? sanitize_textarea_field($payload['pizza_order_details'] ?? '') : '';
+    $pizza_total = $pizza_requested ? ($pizza_quantity * intval($settings['pizza_price'] ?? 18)) : 0;
+    $total = $base + $extra_price + $pizza_total;
+
+    return [
+        'first_name' => $first,
+        'last_name' => $last,
+        'email' => $email,
+        'phone' => $phone,
+        'guest_count' => $guest_count,
+        'customer_type' => $customer_type,
+        'business_name' => $business_name,
+        'payment_method' => $payment_method,
+        'event_format' => $event_format,
+        'movie_title' => $event_format === 'movie' ? $movie_title : '',
+        'live_description' => $event_format === 'live' ? $live_desc : '',
+        'notes' => $notes,
+        'visibility' => $visibility,
+        'extra_hours' => $extra_hours,
+        'guest_hours' => intval($calc['guest_hours']),
+        'doors_open_at' => $doorsOpen->format('Y-m-d H:i:s'),
+        'doors_open_local' => $doorsOpen->format('l, F j, Y g:i A'),
+        'show_start_at' => $calc['show_start']->format('Y-m-d H:i:s'),
+        'doors_close_at' => $calc['doors_close']->format('Y-m-d H:i:s'),
+        'reserved_start_at' => $calc['reserved_start']->format('Y-m-d H:i:s'),
+        'reserved_end_at' => $calc['reserved_end']->format('Y-m-d H:i:s'),
+        'base_price' => $base,
+        'extra_price' => $extra_price,
+        'pizza_requested' => $pizza_requested,
+        'pizza_quantity' => $pizza_quantity,
+        'pizza_order_details' => $pizza_order_details,
+        'pizza_total' => $pizza_total,
+        'total_price' => $total,
+    ];
+}
+
+function roxy_eb_tier_from_guest_count($guest_count) {
+    return intval($guest_count) <= 25 ? 'under_25' : 'over_26';
+}
+
+function roxy_eb_shifts_from_guest_count($guest_count) {
+    return intval($guest_count) <= 25 ? 1 : 2;
+}
+
+function roxy_eb_create_booking_from_payload($payload, $order = null, $status = 'confirmed') {
+    $guestCount = intval($payload['guest_count']);
+    $booking_id = roxy_eb_repo_insert_booking([
+        'status' => $status,
+        'wp_user_id' => $order ? ($order->get_user_id() ?: null) : (get_current_user_id() ?: null),
+        'customer_first_name' => sanitize_text_field($payload['first_name']),
+        'customer_last_name' => sanitize_text_field($payload['last_name']),
+        'customer_email' => sanitize_email($payload['email']),
+        'customer_phone' => sanitize_text_field($payload['phone']),
+        'customer_type' => sanitize_text_field($payload['customer_type'] ?? 'personal'),
+        'business_name' => !empty($payload['business_name']) ? sanitize_text_field($payload['business_name']) : null,
+        'payment_method' => sanitize_text_field($payload['payment_method'] ?? 'pay_now'),
+        'invoice_status' => (($payload['payment_method'] ?? 'pay_now') === 'invoice') ? 'pending' : 'not_needed',
+        'guest_count' => $guestCount,
+        'tier' => roxy_eb_tier_from_guest_count($guestCount),
+        'staff_shifts_required' => roxy_eb_shifts_from_guest_count($guestCount),
+        'event_format' => sanitize_text_field($payload['event_format']),
+        'movie_title' => !empty($payload['movie_title']) ? sanitize_text_field($payload['movie_title']) : null,
+        'live_description' => !empty($payload['live_description']) ? sanitize_textarea_field($payload['live_description']) : null,
+        'visibility' => sanitize_text_field($payload['visibility']),
+        'notes_admin' => !empty($payload['notes']) ? sanitize_textarea_field($payload['notes']) : null,
+        'doors_open_at' => sanitize_text_field($payload['doors_open_at']),
+        'show_start_at' => sanitize_text_field($payload['show_start_at']),
+        'doors_close_at' => sanitize_text_field($payload['doors_close_at']),
+        'reserved_start_at' => sanitize_text_field($payload['reserved_start_at']),
+        'reserved_end_at' => sanitize_text_field($payload['reserved_end_at']),
+        'extra_hours' => intval($payload['extra_hours']),
+        'base_price' => intval($payload['base_price']),
+        'extra_price' => intval($payload['extra_price']),
+        'pizza_requested' => !empty($payload['pizza_requested']) ? 1 : 0,
+        'pizza_quantity' => intval($payload['pizza_quantity'] ?? 0),
+        'pizza_order_details' => !empty($payload['pizza_order_details']) ? sanitize_textarea_field($payload['pizza_order_details']) : null,
+        'pizza_total' => intval($payload['pizza_total'] ?? 0),
+        'total_price' => intval($payload['total_price']),
+        'woo_order_id' => $order ? intval($order->get_id()) : null,
+        'sling_status' => 'unscheduled',
+    ]);
+
+    if (is_wp_error($booking_id)) return $booking_id;
+
+    roxy_eb_schedule_pizza_reminder(intval($booking_id));
+
+    $settings = roxy_eb_get_settings();
+    if (($settings['sling_mode'] ?? 'disabled') !== 'disabled' && function_exists('roxy_eb_sling_enqueue_sync')) {
+        roxy_eb_sling_enqueue_sync($booking_id, (($payload['payment_method'] ?? 'pay_now') === 'invoice') ? 'invoice_booking' : 'payment_complete');
+    }
+
+    return $booking_id;
 }
 
 function roxy_eb_on_payment_complete($order_id) {
@@ -244,92 +392,39 @@ function roxy_eb_on_payment_complete($order_id) {
     $pid = intval($settings['booking_product_id'] ?? 0);
     if ($pid <= 0) return;
 
-    // Avoid duplicate creation
     $existing = roxy_eb_repo_get_booking_by_order($order_id);
     if ($existing) return;
 
     foreach ($order->get_items() as $item) {
-        $product_id = $item->get_product_id();
-        if (intval($product_id) !== $pid) continue;
-
-        // New versions store booking JSON in a hidden key; keep a fallback for older orders.
+        if (intval($item->get_product_id()) !== $pid) continue;
         $raw = $item->get_meta('_roxy_eb_booking', true);
-        if (empty($raw)) {
-            $raw = $item->get_meta('Roxy Booking Data', true);
-        }
+        if (empty($raw)) $raw = $item->get_meta('Roxy Booking Data', true);
         $b = json_decode((string)$raw, true);
         if (!is_array($b)) continue;
 
         $tz = wp_timezone();
         $doorsOpen = new DateTimeImmutable($b['doors_open_at'], $tz);
-        $extraHours = intval($b['extra_hours']);
-        $calc = roxy_eb_calc_times($doorsOpen, $extraHours);
+        $calc = roxy_eb_calc_times($doorsOpen, intval($b['extra_hours'] ?? 0));
 
-        // One last availability check (atomic-ish). If conflict, refund + notify.
         if (!roxy_eb_is_slot_available($calc['reserved_start'], $calc['reserved_end'])) {
-            // Attempt refund
             roxy_eb_handle_conflict_refund($order, $b);
             return;
         }
 
-        $guestCount = intval($b['guest_count']);
-        $tier = ($guestCount <= 25) ? 'under_26' : 'over_25';
-        $shifts = ($guestCount <= 25) ? 1 : 2;
-
-        $booking_id = roxy_eb_repo_insert_booking([
-            'status' => 'confirmed',
-            'wp_user_id' => $order->get_user_id() ?: null,
-            'customer_first_name' => sanitize_text_field($b['first_name'] ?? $order->get_billing_first_name()),
-            'customer_last_name' => sanitize_text_field($b['last_name'] ?? $order->get_billing_last_name()),
-            'customer_email' => sanitize_email($order->get_billing_email()),
-            'customer_phone' => sanitize_text_field($order->get_billing_phone()),
-            'guest_count' => $guestCount,
-            'tier' => $tier,
-            'staff_shifts_required' => $shifts,
-            'event_format' => sanitize_text_field($b['event_format']),
-            'movie_title' => !empty($b['movie_title']) ? sanitize_text_field($b['movie_title']) : null,
-            'live_description' => !empty($b['live_description']) ? sanitize_textarea_field($b['live_description']) : null,
-            'visibility' => sanitize_text_field($b['visibility']),
-            // Shared customer/admin notes (also sent to Sling)
-            'notes_admin' => !empty($b['notes']) ? sanitize_textarea_field($b['notes']) : null,
-            'doors_open_at' => roxy_eb_datetime_to_mysql($doorsOpen),
-            'show_start_at' => roxy_eb_datetime_to_mysql($calc['show_start']),
-            'doors_close_at' => roxy_eb_datetime_to_mysql($calc['doors_close']),
-            'reserved_start_at' => roxy_eb_datetime_to_mysql($calc['reserved_start']),
-            'reserved_end_at' => roxy_eb_datetime_to_mysql($calc['reserved_end']),
-            'extra_hours' => $extraHours,
-            'base_price' => intval($b['base_price']),
-            'extra_price' => intval($b['extra_price']),
-            'total_price' => intval($b['total_price']),
-            'woo_order_id' => $order_id,
-            // Default to UNSCHEDULED until we actually create a Sling shift.
-            'sling_status' => 'unscheduled',
-        ]);
-
+        $booking_id = roxy_eb_create_booking_from_payload($b, $order, 'confirmed');
         if (is_wp_error($booking_id)) {
             $order->add_order_note('Roxy booking creation failed: ' . $booking_id->get_error_message());
             roxy_eb_email_internal_booking_failed($order, $booking_id->get_error_message());
             return;
         }
 
-        // Send internal confirmation email + customer confirmation email
         roxy_eb_email_internal_booking_confirmed($order, $booking_id);
         roxy_eb_email_customer_booking_confirmed($order, $booking_id);
-
-        // Sling automation (async best-effort)
-        $settings = roxy_eb_get_settings();
-        $sling_mode = $settings['sling_mode'] ?? 'disabled';
-        if ($sling_mode !== 'disabled' && function_exists('roxy_eb_sling_enqueue_sync')) {
-            // Booking remains "unscheduled" until the async job succeeds.
-            roxy_eb_sling_enqueue_sync($booking_id, 'payment_complete');
-        }
-
-        return; // only one booking item expected
+        return;
     }
 }
 
 function roxy_eb_handle_conflict_refund($order, $b) {
-    // Mark note, attempt refund, email internal.
     $order->add_order_note('Roxy booking conflict: slot became unavailable at payment completion.');
     try {
         $amount = floatval($b['total_price'] ?? $order->get_total());
@@ -368,27 +463,16 @@ function roxy_eb_thankyou_booking_details($order_id) {
         return;
     }
 
-    $doors = esc_html($booking['doors_open_at']);
-    $show  = esc_html($booking['show_start_at']);
-    $duration = intval($booking['extra_hours']) + 2;
-    $guests = intval($booking['guest_count']);
-    $type = esc_html(ucfirst($booking['event_format']));
-    $vis  = esc_html(ucfirst($booking['visibility']));
     echo '<ul>';
-    echo '<li><strong>Doors open:</strong> ' . $doors . '</li>';
-    echo '<li><strong>Show starts:</strong> ' . $show . ' (about 30 minutes after doors)</li>';
-    echo '<li><strong>Duration:</strong> ' . esc_html($duration) . ' hours</li>';
-    echo '<li><strong>Guests:</strong> ' . esc_html($guests) . '</li>';
-    echo '<li><strong>Type:</strong> ' . $type . '</li>';
-    echo '<li><strong>Visibility:</strong> ' . $vis . '</li>';
-    if ($booking['event_format'] === 'movie' && !empty($booking['movie_title'])) {
-        echo '<li><strong>Movie title:</strong> ' . esc_html($booking['movie_title']) . '</li>';
-    }
-    if ($booking['event_format'] === 'live' && !empty($booking['live_description'])) {
-        echo '<li><strong>Live event details:</strong> ' . esc_html($booking['live_description']) . '</li>';
-    }
-    if (!empty($booking['notes_admin'])) {
-        echo '<li><strong>Notes:</strong> ' . nl2br(esc_html($booking['notes_admin'])) . '</li>';
+    echo '<li><strong>Doors open:</strong> ' . esc_html($booking['doors_open_at']) . '</li>';
+    echo '<li><strong>Show starts:</strong> ' . esc_html($booking['show_start_at']) . '</li>';
+    echo '<li><strong>Duration:</strong> ' . esc_html(2 + intval($booking['extra_hours'])) . ' hours</li>';
+    echo '<li><strong>Guests:</strong> ' . esc_html(intval($booking['guest_count'])) . '</li>';
+    echo '<li><strong>Payment:</strong> ' . esc_html(($booking['payment_method'] === 'invoice') ? 'Invoice' : 'Pay now') . '</li>';
+    if (!empty($booking['business_name'])) echo '<li><strong>Business:</strong> ' . esc_html($booking['business_name']) . '</li>';
+    if (!empty($booking['pizza_requested'])) {
+        echo '<li><strong>Pizza:</strong> ' . esc_html(intval($booking['pizza_quantity'])) . ' pizza(s)</li>';
+        echo '<li><strong>Pizza order:</strong> ' . nl2br(esc_html($booking['pizza_order_details'])) . '</li>';
     }
     echo '</ul>';
     echo '<p><a href="' . esc_url(wc_get_account_endpoint_url('roxy-bookings')) . '">View or manage your bookings</a></p>';
@@ -396,119 +480,68 @@ function roxy_eb_thankyou_booking_details($order_id) {
 }
 
 function roxy_eb_ajax_start_booking() {
+    check_ajax_referer('roxy_eb_nonce', 'nonce');
     if (!roxy_eb_wc_ready()) wp_send_json_error(['message' => 'WooCommerce is required.']);
-$settings = roxy_eb_get_settings();
+    $settings = roxy_eb_get_settings();
     $pid = intval($settings['booking_product_id'] ?? 0);
     if ($pid <= 0) wp_send_json_error(['message' => 'Booking product not configured.']);
 
     $payload = isset($_POST['booking']) ? (array) $_POST['booking'] : [];
-    $errors = [];
+    $validation = roxy_eb_validate_booking_payload($payload);
+    if (is_wp_error($validation)) wp_send_json_error(['message' => $validation->get_error_message()]);
 
-    $first = sanitize_text_field($payload['first_name'] ?? '');
-    $last  = sanitize_text_field($payload['last_name'] ?? '');
-    $email = sanitize_email($payload['email'] ?? '');
-    $phone = sanitize_text_field($payload['phone'] ?? '');
+    $booking_data = roxy_eb_normalize_booking_payload($payload);
 
-    if (empty($first)) $errors[] = 'First name is required.';
-    if (empty($last))  $errors[] = 'Last name is required.';
-    if (empty($email) || !is_email($email)) $errors[] = 'Valid email is required.';
-    if (empty($phone)) $errors[] = 'Phone number is required.';
-
-    $guest_count = intval($payload['guest_count'] ?? 0);
-    $guest_cap = intval($settings['guest_cap'] ?? 250);
-    if ($guest_count < 1) $errors[] = 'Guest count is required.';
-    if ($guest_count > $guest_cap) $errors[] = 'Guest count is invalid.';
-
-    $event_format = sanitize_text_field($payload['event_format'] ?? 'movie');
-    if (!in_array($event_format, ['movie','live'], true)) $errors[] = 'Invalid event format.';
-
-    $visibility = sanitize_text_field($payload['visibility'] ?? 'private');
-    if (!in_array($visibility, ['private','public'], true)) $errors[] = 'Invalid visibility setting.';
-
-    $movie_title = sanitize_text_field($payload['movie_title'] ?? '');
-    $live_desc   = sanitize_textarea_field($payload['live_description'] ?? '');
-    $notes       = sanitize_textarea_field($payload['notes'] ?? '');
-
-    if ($event_format === 'movie' && empty($movie_title)) $errors[] = 'Movie title is required.';
-    if ($event_format === 'live' && empty($live_desc)) $errors[] = 'Live event description is required.';
-
-    $extra_hours = max(0, intval($payload['extra_hours'] ?? 0));
-
-    // Doors open datetime is provided as ISO local string
-    $doors_open = sanitize_text_field($payload['doors_open_at'] ?? '');
-    $tz = wp_timezone();
-    try {
-        $doorsOpen = new DateTimeImmutable($doors_open, $tz);
-    } catch (Exception $e) {
-        $errors[] = 'Invalid start time.';
-        $doorsOpen = null;
+    if (($booking_data['payment_method'] ?? 'pay_now') === 'invoice') {
+        wp_send_json_error(['message' => 'Invoice bookings must use the invoice submission action.']);
     }
 
-    if (!empty($errors)) wp_send_json_error(['message' => implode(' ', $errors)]);
-
-    $calc = roxy_eb_calc_times($doorsOpen, $extra_hours);
-
-    // Enforce 15-min increments
-    $inc = intval($settings['time_increment_minutes'] ?? 15);
-    $minute = intval($doorsOpen->format('i'));
-    if (($minute % $inc) !== 0) wp_send_json_error(['message' => 'Start times must be in ' . $inc . '-minute increments.']);
-
-    if (!roxy_eb_check_lead_time($doorsOpen)) {
-        wp_send_json_error(['message' => 'Bookings must be made at least ' . intval($settings['lead_time_hours']) . ' hours in advance. Please contact us for sooner bookings.']);
-    }
-    if (!roxy_eb_time_within_operating_hours($doorsOpen, intval($calc['guest_hours']))) {
-        wp_send_json_error(['message' => 'Selected time is outside operating hours.']);
-    }
-    if (!roxy_eb_is_slot_available($calc['reserved_start'], $calc['reserved_end'])) {
-        wp_send_json_error(['message' => 'That time is not available.']);
-    }
-
-    // Price calc
-    $base = ($guest_count <= 25) ? intval($settings['base_price_under']) : intval($settings['base_price_over']);
-    $extra_price = $extra_hours * intval($settings['extra_hour_price']);
-    $total = $base + $extra_price;
-
-    // Clear existing booking product lines (sold individually, but just in case)
     $cart = WC()->cart;
     foreach ($cart->get_cart() as $key => $item) {
         if (intval($item['product_id']) === $pid) $cart->remove_cart_item($key);
     }
 
-    $booking_data = [
-        'first_name' => $first,
-        'last_name' => $last,
-        'email' => $email,
-        'phone' => $phone,
-        'guest_count' => $guest_count,
-        'event_format' => $event_format,
-        'movie_title' => $event_format === 'movie' ? $movie_title : '',
-        'live_description' => $event_format === 'live' ? $live_desc : '',
-        'notes' => $notes,
-        'visibility' => $visibility,
-        'extra_hours' => $extra_hours,
-        'guest_hours' => intval($calc['guest_hours']),
-        'doors_open_at' => $doorsOpen->format('Y-m-d H:i:s'),
-        'doors_open_local' => $doorsOpen->format('l, F j, Y g:i A'),
-        'show_start_at' => $calc['show_start']->format('Y-m-d H:i:s'),
-        'doors_close_at' => $calc['doors_close']->format('Y-m-d H:i:s'),
-        'reserved_start_at' => $calc['reserved_start']->format('Y-m-d H:i:s'),
-        'reserved_end_at' => $calc['reserved_end']->format('Y-m-d H:i:s'),
-        'base_price' => $base,
-        'extra_price' => $extra_price,
-        'total_price' => $total,
-    ];
+    $added = $cart->add_to_cart($pid, 1, 0, [], [ roxy_eb_booking_meta_key() => $booking_data ]);
+    if (!$added) wp_send_json_error(['message' => 'Could not start checkout. Please try again.']);
 
-    $cart_item_data = [ roxy_eb_booking_meta_key() => $booking_data ];
-    $added = $cart->add_to_cart($pid, 1, 0, [], $cart_item_data);
-    if (!$added) {
-        wp_send_json_error(['message' => 'Could not start checkout. Please try again.']);
-    }
-
-    // Pre-fill checkout fields
-    WC()->customer->set_billing_first_name($first);
-    WC()->customer->set_billing_last_name($last);
-    WC()->customer->set_billing_email($email);
-    WC()->customer->set_billing_phone($phone);
+    WC()->customer->set_billing_first_name($booking_data['first_name']);
+    WC()->customer->set_billing_last_name($booking_data['last_name']);
+    WC()->customer->set_billing_email($booking_data['email']);
+    WC()->customer->set_billing_phone($booking_data['phone']);
 
     wp_send_json_success(['redirect' => wc_get_checkout_url()]);
+}
+
+function roxy_eb_ajax_submit_invoice_booking() {
+    check_ajax_referer('roxy_eb_nonce', 'nonce');
+    $payload = isset($_POST['booking']) ? (array) $_POST['booking'] : [];
+
+    $payload['customer_type'] = sanitize_text_field($payload['customer_type'] ?? 'personal');
+    $payload['payment_method'] = sanitize_text_field($payload['payment_method'] ?? 'pay_now');
+    if (($payload['customer_type'] ?? 'personal') !== 'business') {
+        wp_send_json_error(['message' => 'Invoice bookings are only available for business customers.']);
+    }
+    if (($payload['payment_method'] ?? '') !== 'invoice') {
+        wp_send_json_error(['message' => 'Invalid invoice booking request.']);
+    }
+
+    $validation = roxy_eb_validate_booking_payload($payload);
+    if (is_wp_error($validation)) wp_send_json_error(['message' => $validation->get_error_message()]);
+
+    $booking_data = roxy_eb_normalize_booking_payload($payload);
+    $booking_id = roxy_eb_create_booking_from_payload($booking_data, null, 'pending_invoice');
+
+    if (is_wp_error($booking_id)) {
+        wp_send_json_error(['message' => $booking_id->get_error_message()]);
+    }
+
+    $booking = roxy_eb_repo_get_booking($booking_id);
+    roxy_eb_email_internal_invoice_booking($booking);
+    roxy_eb_email_customer_invoice_booking($booking);
+
+    $redirect = add_query_arg('roxy_eb_submitted', 'invoice', wp_get_referer() ?: home_url('/'));
+    wp_send_json_success([
+        'redirect' => $redirect,
+        'message' => 'Your booking request was received. We will follow up with invoice details.',
+    ]);
 }

@@ -5,30 +5,26 @@ function roxy_eb_option_key() { return 'roxy_eb_settings'; }
 
 function roxy_eb_defaults() {
     return [
-        'internal_email' => 'info@thenewportroxy.com',
+        'internal_email' => 'info@newportroxy.com',
         'guest_cap' => 250,
         'lead_time_hours' => 48,
         'cancel_free_days' => 7,
         'base_price_under' => 250,
         'base_price_over'  => 300,
         'extra_hour_price' => 100,
+        'pizza_price' => 18,
         'open_time' => '08:00',
-        'close_time' => '24:00', // interpret as end-of-day
+        'close_time' => '24:00',
         'time_increment_minutes' => 15,
-        // blocked showtime windows (local time, by weekday)
-        // weekday: 0=Sun..6=Sat
         'showtime_blocks' => [
             ['weekday' => 5, 'start' => '18:00', 'end' => '22:00', 'label' => 'Regular Showing (Fri)'],
             ['weekday' => 6, 'start' => '18:00', 'end' => '22:00', 'label' => 'Regular Showing (Sat)'],
             ['weekday' => 0, 'start' => '13:00', 'end' => '17:00', 'label' => 'Regular Showing (Sun)'],
         ],
-        // WooCommerce product
         'booking_product_id' => 0,
 
-        // Sling integration
-        'sling_mode' => 'disabled', // disabled|webhook|direct
+        'sling_mode' => 'disabled',
         'sling_base_url' => 'https://api.getsling.com',
-        // Direct API auth (stored encrypted)
         'sling_auth_email' => '',
         'sling_auth_password_enc' => '',
         'sling_auth_token_enc' => '',
@@ -36,24 +32,24 @@ function roxy_eb_defaults() {
         'sling_webhook_url' => '',
         'sling_auth_fail_email' => 'info@newportroxy.com',
         'sling_publish_shifts' => 0,
-        // Direct mode mapping
-        // Preferred: store names/external IDs and resolve numeric IDs via API (cached below)
         'sling_location_label' => 'Newport Roxy Theater',
         'sling_position_private_show_label' => 'Private Show',
         'sling_position_concessionist_label' => 'Concessionist',
-        // Optional manual numeric IDs (if API list endpoints aren't available)
         'sling_location_id' => '',
         'sling_position_private_show_id' => '',
         'sling_position_concessionist_id' => '',
-        // Cached resolved numeric IDs
         'sling_location_id_resolved' => '',
         'sling_position_private_show_id_resolved' => '',
         'sling_position_concessionist_id_resolved' => '',
-        // If your Sling API expects different fields, use webhook mode or adjust template in code.
         'sling_shift_title_template' => '{VISIBILITY_EVENT} — {LAST_NAME} — {GUESTS} guests',
         'sling_shift_notes_template' => "Customer: {FIRST_NAME} {LAST_NAME}
+Business: {BUSINESS_NAME}
+Customer type: {CUSTOMER_TYPE}
 Phone: {PHONE}
 Email: {EMAIL}
+
+Payment: {PAYMENT_METHOD}
+Invoice status: {INVOICE_STATUS}
 
 Type: {TYPE}
 {DETAILS_LABEL}: {EVENT_DETAILS}
@@ -61,6 +57,13 @@ Type: {TYPE}
 Doors open: {DOORS_OPEN}
 Show starts: {SHOW_START}
 Guests: {GUESTS}
+
+Pizza: {PIZZA_REQUESTED}
+Pizza quantity: {PIZZA_QUANTITY}
+Pizza total: {PIZZA_TOTAL}
+Pizza handled: {PIZZA_STATUS}
+Pizza order:
+{PIZZA_ORDER}
 
 Notes:
 {NOTES}",
@@ -70,39 +73,15 @@ Notes:
 function roxy_eb_get_settings() {
     $saved = get_option(roxy_eb_option_key(), []);
     $defaults = roxy_eb_defaults();
-    // Merge recursively for showtime blocks
     $merged = array_merge($defaults, is_array($saved) ? $saved : []);
     if (empty($merged['showtime_blocks']) || !is_array($merged['showtime_blocks'])) {
         $merged['showtime_blocks'] = $defaults['showtime_blocks'];
-    }
-    // Migration: if older Sling templates are present, upgrade to the latest defaults.
-    // This ensures Sling shift details include customer contact + event details + notes.
-    $defaults_tpl_title = $defaults['sling_shift_title_template'] ?? '';
-    $defaults_tpl_notes = $defaults['sling_shift_notes_template'] ?? '';
-    $cur_title = (string)($merged['sling_shift_title_template'] ?? '');
-    $cur_notes = (string)($merged['sling_shift_notes_template'] ?? '');
-    // Heuristic: older templates lacked customer contact fields.
-    if ($defaults_tpl_title && $cur_title && strpos($cur_title, '{VISIBILITY_EVENT}') === false) {
-        // If user still has the old default-ish title, upgrade it.
-        if (strpos($cur_title, '{LAST_NAME}') !== false && strpos($cur_title, '{GUESTS}') !== false) {
-            $merged['sling_shift_title_template'] = $defaults_tpl_title;
-        }
-    }
-    if ($defaults_tpl_notes && $cur_notes) {
-        $needs_upgrade = (strpos($cur_notes, '{PHONE}') === false) || (strpos($cur_notes, '{EMAIL}') === false) || (strpos($cur_notes, '{EVENT_DETAILS}') === false) || (strpos($cur_notes, '{NOTES}') === false);
-        // Also upgrade if the old template contains the legacy minimal fields pattern.
-        $legacy_hint = (strpos($cur_notes, 'Guests:') !== false && strpos($cur_notes, 'Type:') !== false && strpos($cur_notes, 'Order:') !== false && strpos($cur_notes, 'Customer:') === false);
-        if ($needs_upgrade || $legacy_hint) {
-            $merged['sling_shift_notes_template'] = $defaults_tpl_notes;
-        }
     }
     return $merged;
 }
 
 function roxy_eb_update_settings($new) {
     $defaults = roxy_eb_defaults();
-    // Preserve previously-saved secrets/derived values unless explicitly overwritten.
-    // This prevents clearing the Sling token when the token input is left blank.
     $existing = get_option(roxy_eb_option_key(), []);
     if (!is_array($existing)) $existing = [];
     $clean = [];
@@ -114,6 +93,7 @@ function roxy_eb_update_settings($new) {
     $clean['base_price_under'] = max(0, intval($new['base_price_under'] ?? $defaults['base_price_under']));
     $clean['base_price_over']  = max(0, intval($new['base_price_over']  ?? $defaults['base_price_over']));
     $clean['extra_hour_price'] = max(0, intval($new['extra_hour_price'] ?? $defaults['extra_hour_price']));
+    $clean['pizza_price'] = max(0, intval($new['pizza_price'] ?? $defaults['pizza_price']));
 
     $clean['open_time']  = preg_match('/^\d{2}:\d{2}$/', $new['open_time'] ?? '') ? $new['open_time'] : $defaults['open_time'];
     $clean['close_time'] = preg_match('/^\d{2}:\d{2}$/', $new['close_time'] ?? '') ? $new['close_time'] : $defaults['close_time'];
@@ -123,11 +103,9 @@ function roxy_eb_update_settings($new) {
 
     $clean['booking_product_id'] = intval($new['booking_product_id'] ?? $defaults['booking_product_id']);
 
-    // Showtime blocks
     $clean['showtime_blocks'] = [];
     if (!empty($new['showtime_blocks']) && is_array($new['showtime_blocks'])) {
         foreach ($new['showtime_blocks'] as $b) {
-            // Allow admin UI to delete rows.
             if (!empty($b['_delete'])) continue;
             $weekday = isset($b['weekday']) ? intval($b['weekday']) : null;
             $start = $b['start'] ?? '';
@@ -140,55 +118,25 @@ function roxy_eb_update_settings($new) {
     }
     if (empty($clean['showtime_blocks'])) $clean['showtime_blocks'] = $defaults['showtime_blocks'];
 
-    // Sling
     $mode = $new['sling_mode'] ?? $defaults['sling_mode'];
     $clean['sling_mode'] = in_array($mode, ['disabled','webhook','direct'], true) ? $mode : 'disabled';
     $clean['sling_base_url'] = esc_url_raw($new['sling_base_url'] ?? $defaults['sling_base_url']);
-    // Credentials are stored encrypted.
     $clean['sling_auth_email'] = sanitize_email($new['sling_auth_email'] ?? ($existing['sling_auth_email'] ?? ($defaults['sling_auth_email'] ?? '')));
-    // Password/token enc fields: keep existing unless explicitly provided.
-    $clean['sling_auth_password_enc'] = sanitize_text_field(
-        array_key_exists('sling_auth_password_enc', $new)
-            ? ($new['sling_auth_password_enc'] ?? '')
-            : ($existing['sling_auth_password_enc'] ?? ($defaults['sling_auth_password_enc'] ?? ''))
-    );
-    $clean['sling_auth_token_enc'] = sanitize_text_field(
-        array_key_exists('sling_auth_token_enc', $new)
-            ? ($new['sling_auth_token_enc'] ?? '')
-            : ($existing['sling_auth_token_enc'] ?? ($defaults['sling_auth_token_enc'] ?? ''))
-    );
-    $clean['sling_auth_token_obtained_at'] = sanitize_text_field(
-        array_key_exists('sling_auth_token_obtained_at', $new)
-            ? ($new['sling_auth_token_obtained_at'] ?? '')
-            : ($existing['sling_auth_token_obtained_at'] ?? ($defaults['sling_auth_token_obtained_at'] ?? ''))
-    );
+    $clean['sling_auth_password_enc'] = sanitize_text_field(array_key_exists('sling_auth_password_enc', $new) ? ($new['sling_auth_password_enc'] ?? '') : ($existing['sling_auth_password_enc'] ?? ''));
+    $clean['sling_auth_token_enc'] = sanitize_text_field(array_key_exists('sling_auth_token_enc', $new) ? ($new['sling_auth_token_enc'] ?? '') : ($existing['sling_auth_token_enc'] ?? ''));
+    $clean['sling_auth_token_obtained_at'] = sanitize_text_field(array_key_exists('sling_auth_token_obtained_at', $new) ? ($new['sling_auth_token_obtained_at'] ?? '') : ($existing['sling_auth_token_obtained_at'] ?? ''));
     $clean['sling_webhook_url'] = esc_url_raw($new['sling_webhook_url'] ?? '');
     $clean['sling_auth_fail_email'] = sanitize_email($new['sling_auth_fail_email'] ?? ($existing['sling_auth_fail_email'] ?? ($defaults['sling_auth_fail_email'] ?? get_option('admin_email'))));
     $clean['sling_publish_shifts'] = !empty($new['sling_publish_shifts']) ? 1 : 0;
     $clean['sling_location_label'] = sanitize_text_field($new['sling_location_label'] ?? ($defaults['sling_location_label'] ?? ''));
     $clean['sling_position_private_show_label'] = sanitize_text_field($new['sling_position_private_show_label'] ?? ($defaults['sling_position_private_show_label'] ?? ''));
     $clean['sling_position_concessionist_label'] = sanitize_text_field($new['sling_position_concessionist_label'] ?? ($defaults['sling_position_concessionist_label'] ?? ''));
-
     $clean['sling_location_id'] = sanitize_text_field($new['sling_location_id'] ?? '');
     $clean['sling_position_private_show_id'] = sanitize_text_field($new['sling_position_private_show_id'] ?? '');
     $clean['sling_position_concessionist_id'] = sanitize_text_field($new['sling_position_concessionist_id'] ?? '');
-
-    // Resolved IDs (set by test connection / resolve action). Preserve unless explicitly provided.
-    $clean['sling_location_id_resolved'] = sanitize_text_field(
-        array_key_exists('sling_location_id_resolved', $new)
-            ? ($new['sling_location_id_resolved'] ?? '')
-            : ($existing['sling_location_id_resolved'] ?? ($defaults['sling_location_id_resolved'] ?? ''))
-    );
-    $clean['sling_position_private_show_id_resolved'] = sanitize_text_field(
-        array_key_exists('sling_position_private_show_id_resolved', $new)
-            ? ($new['sling_position_private_show_id_resolved'] ?? '')
-            : ($existing['sling_position_private_show_id_resolved'] ?? ($defaults['sling_position_private_show_id_resolved'] ?? ''))
-    );
-    $clean['sling_position_concessionist_id_resolved'] = sanitize_text_field(
-        array_key_exists('sling_position_concessionist_id_resolved', $new)
-            ? ($new['sling_position_concessionist_id_resolved'] ?? '')
-            : ($existing['sling_position_concessionist_id_resolved'] ?? ($defaults['sling_position_concessionist_id_resolved'] ?? ''))
-    );
+    $clean['sling_location_id_resolved'] = sanitize_text_field(array_key_exists('sling_location_id_resolved', $new) ? ($new['sling_location_id_resolved'] ?? '') : ($existing['sling_location_id_resolved'] ?? ''));
+    $clean['sling_position_private_show_id_resolved'] = sanitize_text_field(array_key_exists('sling_position_private_show_id_resolved', $new) ? ($new['sling_position_private_show_id_resolved'] ?? '') : ($existing['sling_position_private_show_id_resolved'] ?? ''));
+    $clean['sling_position_concessionist_id_resolved'] = sanitize_text_field(array_key_exists('sling_position_concessionist_id_resolved', $new) ? ($new['sling_position_concessionist_id_resolved'] ?? '') : ($existing['sling_position_concessionist_id_resolved'] ?? ''));
     $clean['sling_shift_title_template'] = sanitize_text_field($new['sling_shift_title_template'] ?? $defaults['sling_shift_title_template']);
     $clean['sling_shift_notes_template'] = sanitize_textarea_field($new['sling_shift_notes_template'] ?? $defaults['sling_shift_notes_template']);
 
@@ -200,10 +148,6 @@ function roxy_eb_register_settings() {
     // No WP Settings API wiring; admin page handles saving.
 }
 
-/**
- * Create booking product if missing.
- * Stores product id in settings.
- */
 function roxy_eb_maybe_create_booking_product() {
     if (!class_exists('WC_Product_Simple')) return;
 

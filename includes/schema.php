@@ -24,7 +24,7 @@ function roxy_eb_install_schema() {
 
     $bookings = roxy_eb_table_bookings();
     $blocks   = roxy_eb_table_blocks();
-    $logs    = roxy_eb_table_sling_logs();
+    $logs     = roxy_eb_table_sling_logs();
 
     $sql1 = "CREATE TABLE $bookings (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -36,6 +36,10 @@ function roxy_eb_install_schema() {
         customer_last_name VARCHAR(100) NOT NULL,
         customer_email VARCHAR(190) NOT NULL,
         customer_phone VARCHAR(50) NOT NULL,
+        customer_type VARCHAR(16) NOT NULL DEFAULT 'personal',
+        business_name VARCHAR(190) NULL,
+        payment_method VARCHAR(16) NOT NULL DEFAULT 'pay_now',
+        invoice_status VARCHAR(16) NOT NULL DEFAULT 'not_needed',
         guest_count INT UNSIGNED NOT NULL,
         tier VARCHAR(32) NOT NULL,
         staff_shifts_required TINYINT UNSIGNED NOT NULL DEFAULT 1,
@@ -51,6 +55,12 @@ function roxy_eb_install_schema() {
         extra_hours INT NOT NULL DEFAULT 0,
         base_price INT NOT NULL DEFAULT 0,
         extra_price INT NOT NULL DEFAULT 0,
+        pizza_requested TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        pizza_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+        pizza_order_details TEXT NULL,
+        pizza_total INT NOT NULL DEFAULT 0,
+        pizza_checked_at DATETIME NULL,
+        pizza_checked_by BIGINT UNSIGNED NULL,
         total_price INT NOT NULL DEFAULT 0,
         woo_order_id BIGINT UNSIGNED NULL,
         sling_shift_ids TEXT NULL,
@@ -64,7 +74,10 @@ function roxy_eb_install_schema() {
         KEY reserved_end_at (reserved_end_at),
         KEY woo_order_id (woo_order_id),
         KEY customer_email (customer_email),
-        KEY wp_user_id (wp_user_id)
+        KEY wp_user_id (wp_user_id),
+        KEY pizza_requested (pizza_requested),
+        KEY invoice_status (invoice_status),
+        KEY payment_method (payment_method)
     ) $charset;";
 
     $sql2 = "CREATE TABLE $blocks (

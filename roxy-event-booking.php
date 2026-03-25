@@ -1,15 +1,15 @@
 <?php
 /**
  * Plugin Name: Roxy Event Booking (WooCommerce + Sling)
- * Description: Private/Public event booking calendar for Newport Roxy. Customers can book time slots, pay via WooCommerce, and automatically create staffing shifts in Sling.
- * Version: 1.3.3
+ * Description: Private/Public event booking calendar for Newport Roxy. Customers can book time slots, pay via WooCommerce, request invoicing for business bookings, order pizza, and automatically create staffing shifts in Sling.
+ * Version: 1.4.0
  * Author: Newport Roxy (AI Team)
  * Text Domain: roxy-event-booking
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('ROXY_EB_VERSION', '1.3.3');
+define('ROXY_EB_VERSION', '1.4.0');
 define('ROXY_EB_PLUGIN_FILE', __FILE__);
 define('ROXY_EB_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ROXY_EB_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -25,15 +25,13 @@ require_once ROXY_EB_PLUGIN_DIR . 'includes/my-account.php';
 require_once ROXY_EB_PLUGIN_DIR . 'includes/admin-pages.php';
 require_once ROXY_EB_PLUGIN_DIR . 'includes/emails.php';
 require_once ROXY_EB_PLUGIN_DIR . 'includes/sling.php';
+require_once ROXY_EB_PLUGIN_DIR . 'includes/pizza-reminders.php';
 
 register_activation_hook(__FILE__, function () {
-    if (!class_exists('WooCommerce')) {
-        roxy_eb_install_schema();
-        update_option('roxy_eb_db_version', ROXY_EB_VERSION);
-        return;
-    }
     roxy_eb_install_schema();
-    roxy_eb_maybe_create_booking_product();
+    if (class_exists('WooCommerce')) {
+        roxy_eb_maybe_create_booking_product();
+    }
     update_option('roxy_eb_db_version', ROXY_EB_VERSION);
 });
 
