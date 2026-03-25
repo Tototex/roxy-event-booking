@@ -542,6 +542,6 @@ function roxy_eb_ajax_submit_invoice_booking() {
     $redirect = add_query_arg('roxy_eb_submitted', 'invoice', wp_get_referer() ?: home_url('/'));
     wp_send_json_success([
         'redirect' => $redirect,
-        'message' => 'Your booking request was received. We will follow up with invoice details.',
+        'message' => 'Your booking request was submitted and your time has been reserved. We will follow up with invoice details shortly.',
     ]);
 }

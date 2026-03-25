@@ -172,7 +172,7 @@ function roxy_eb_shortcode_calendar() {
                         <label id="roxy-eb-pizza-quantity-wrap" style="display:none;">
                             <span>Pizza quantity *</span>
                             <input type="number" name="pizza_quantity" min="1" value="1" />
-                            <small class="roxy-eb-help">Large only. We recommend 1 pizza for every 4 people.</small>
+                            <small class="roxy-eb-help">$18 per pizza. Large only. We recommend 1 pizza for every 4 people.</small>
                         </label>
 
                         <label class="roxy-eb-span-2" id="roxy-eb-pizza-details-wrap" style="display:none;">
@@ -204,6 +204,10 @@ function roxy_eb_shortcode_calendar() {
 
                     <div class="roxy-eb-error" id="roxy-eb-error" style="display:none;"></div>
                 </form>
+
+                <div class="roxy-eb-alert roxy-eb-alert--success" id="roxy-eb-success" style="display:none; margin-top:16px;">
+                    <div id="roxy-eb-success-message"><strong>Booking request submitted.</strong> Your time has been reserved.</div>
+                </div>
             </div>
         </div>
     </div>

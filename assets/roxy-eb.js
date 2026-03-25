@@ -167,7 +167,7 @@
 
     $('#roxy-eb-pricing').html(
       '<div><strong>' + (paymentMethod === 'invoice' ? 'Estimated total to invoice:' : 'Estimated total:') + '</strong> ' + formatMoney(p.total) + '</div>' +
-      '<div style="margin-top:6px; font-size:13px; color:#555;">Event: ' + formatMoney(p.base + p.extra) + ' • Pizza: ' + formatMoney(p.pizza) + '</div>'
+      '<div style="margin-top:6px; font-size:13px; color:#555;">Event: ' + formatMoney(p.base + p.extra) + ' • Pizza: ' + formatMoney(p.pizza) + (pizzaRequested ? ' ($' + Number(RoxyEB.pizzaPrice || 18).toFixed(2) + ' each)' : '') + '</div>'
     );
 
     var dateStr = $('#roxy-eb-modal').data('dateStr');
@@ -256,6 +256,13 @@
 
       $.post(RoxyEB.ajaxUrl, { action: action, nonce: RoxyEB.nonce, booking: booking })
         .done(function(resp){
+          if (resp && resp.success && action === 'roxy_eb_submit_invoice_booking') {
+            var successMsg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Booking request submitted. Your time has been reserved.';
+            $('#roxy-eb-form').hide();
+            $('#roxy-eb-success-message').html('<strong>Booking request submitted.</strong><br>' + successMsg);
+            $('#roxy-eb-success').show();
+            return;
+          }
           if (resp && resp.success && resp.data && resp.data.redirect){ window.location.href = resp.data.redirect; }
           else {
             var msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Could not continue.';
