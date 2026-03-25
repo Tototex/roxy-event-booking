@@ -7,7 +7,6 @@ function roxy_eb_register_my_account_endpoints() {
     });
 
     add_filter('woocommerce_account_menu_items', function ($items) {
-        // Insert before logout
         $logout = $items['customer-logout'] ?? null;
         if ($logout) unset($items['customer-logout']);
         $items['roxy-bookings'] = __('My Bookings', 'roxy-event-booking');
@@ -17,12 +16,10 @@ function roxy_eb_register_my_account_endpoints() {
 
     add_action('woocommerce_account_roxy-bookings_endpoint', 'roxy_eb_render_my_bookings');
 
-    // Flush rules when plugin activates (done via activation hook via schema install); ensure endpoint works
     add_action('wp_loaded', function () {
         // no-op; rewrite flush should be manual if needed
     });
 
-    // Handle cancel action
     add_action('template_redirect', function () {
         if (!is_user_logged_in()) return;
         if (!isset($_GET['roxy_eb_cancel'])) return;
@@ -94,7 +91,8 @@ function roxy_eb_render_my_bookings() {
             $notes = wp_strip_all_tags((string)$b['notes_admin']);
             if (strlen($notes) > 80) $notes = substr($notes, 0, 77) . '...';
         }
-        $can_cancel = ($b['status'] === 'confirmed') && (new DateTimeImmutable('now', wp_timezone()) < $doors->modify('-' . $freeDays . ' days'));
+        $cancelable_statuses = ['confirmed', 'pending_invoice'];
+        $can_cancel = in_array($b['status'], $cancelable_statuses, true) && (new DateTimeImmutable('now', wp_timezone()) < $doors->modify('-' . $freeDays . ' days'));
 
         echo '<tr>';
         echo '<td data-title="Date">' . esc_html($doors->format('D, M j, Y')) . '</td>';
@@ -109,9 +107,8 @@ function roxy_eb_render_my_bookings() {
                 'roxy_eb_cancel' => intval($b['id']),
                 '_wpnonce' => wp_create_nonce('roxy_eb_cancel_' . intval($b['id'])),
             ], wc_get_account_endpoint_url('roxy-bookings'));
-            // Use escaped quotes inside onclick confirm.
-            echo '<a class="button" href="' . esc_url($url) . '" onclick="return confirm(\'Cancel this booking and request a refund?\');">Cancel</a>';
-        } elseif ($b['status'] === 'confirmed') {
+            echo '<a class="button" href="' . esc_url($url) . '" onclick="return confirm(\'Cancel this booking?\');">Cancel</a>';
+        } elseif (in_array($b['status'], ['confirmed', 'pending_invoice'], true)) {
             echo '<span>Contact us to cancel</span>';
         } else {
             echo '—';
@@ -123,9 +120,6 @@ function roxy_eb_render_my_bookings() {
     echo '</tbody></table>';
 }
 
-/**
- * Attempt a real gateway refund for the remaining refundable balance.
- */
 function roxy_eb_attempt_gateway_refund($order, $booking_id) {
     if (!$order || !is_a($order, 'WC_Order')) {
         return new WP_Error('invalid_order', 'Invalid WooCommerce order.');
@@ -162,9 +156,6 @@ function roxy_eb_attempt_gateway_refund($order, $booking_id) {
     ];
 }
 
-/**
- * Cancel booking and refund if eligible.
- */
 function roxy_eb_cancel_booking($booking_id, $by = 'customer') {
     static $in_progress = [];
 
@@ -175,7 +166,9 @@ function roxy_eb_cancel_booking($booking_id, $by = 'customer') {
     $booking = roxy_eb_repo_get_booking($booking_id);
     if (!$booking) return new WP_Error('not_found', 'Booking not found.');
 
-    if ($booking['status'] !== 'confirmed') return new WP_Error('invalid_status', 'This booking cannot be cancelled.');
+    if (!in_array($booking['status'], ['confirmed', 'pending_invoice'], true)) {
+        return new WP_Error('invalid_status', 'This booking cannot be cancelled.');
+    }
 
     $settings = roxy_eb_get_settings();
     $freeDays = intval($settings['cancel_free_days'] ?? 7);
@@ -217,10 +210,14 @@ function roxy_eb_cancel_booking($booking_id, $by = 'customer') {
             }
         }
 
-        // Mark cancelled only after refund succeeds (or no refundable balance remains).
-        roxy_eb_repo_update_booking($booking_id, ['status' => 'cancelled']);
+        roxy_eb_repo_update_booking($booking_id, [
+            'status' => 'cancelled',
+            'invoice_status' => ($booking['payment_method'] ?? '') === 'invoice' ? 'void' : ($booking['invoice_status'] ?? 'not_needed'),
+        ]);
 
-        // Try to cancel Sling shifts (best-effort, async)
+        if (function_exists('roxy_eb_clear_pizza_reminders')) {
+            roxy_eb_clear_pizza_reminders($booking_id);
+        }
         if (function_exists('roxy_eb_sling_enqueue_cancel')) {
             roxy_eb_sling_enqueue_cancel($booking_id);
         }

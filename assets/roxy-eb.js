@@ -62,6 +62,27 @@
     return n === 0 || (n >= 25 && n <= 250);
   }
 
+  function coerceBulkQtyValue(raw){
+    if (raw === '' || raw === null || typeof raw === 'undefined') return raw;
+    var n = Number(raw);
+    if (!Number.isFinite(n)) return raw;
+    if (n <= 0) return 0;
+    if (n > 0 && n < 25) return 25;
+    if (n > 250) return 250;
+    return Math.floor(n);
+  }
+
+  function maybeJumpBulkQty($input, previousValue){
+    var raw = $input.val();
+    if (raw === '') return;
+    var currentValue = Number(raw);
+    var prev = Number(previousValue || 0);
+    if (!Number.isFinite(currentValue)) return;
+    if (prev === 0 && currentValue > 0 && currentValue < 25) {
+      $input.val('25');
+    }
+  }
+
   function computePricing(guestCount, extraHours, pizzaRequested, pizzaQuantity, bulkRequested, bulkPopcornQty, bulkSodaQty){
     guestCount = Number(guestCount||0);
     extraHours = Number(extraHours||0);
@@ -179,7 +200,10 @@
 
     $('#roxy-eb-pricing').html(
       '<div><strong>' + (paymentMethod === 'invoice' ? 'Estimated total to invoice:' : 'Estimated total:') + '</strong> ' + formatMoney(p.total) + '</div>' +
-      '<div style="margin-top:6px; font-size:13px; color:#555;">Event: ' + formatMoney(p.base + p.extra) + ' • Pizza: ' + formatMoney(p.pizza) + (pizzaRequested ? ' ($' + Number(RoxyEB.pizzaPrice || 18).toFixed(2) + ' each)' : '') + '</div>'
+      '<div style="margin-top:6px; font-size:13px; color:#555;">Event: ' + formatMoney(p.base + p.extra) +
+      ' • Pizza: ' + formatMoney(p.pizza) + (pizzaRequested ? ' ($' + Number(RoxyEB.pizzaPrice || 18).toFixed(2) + ' each)' : '') +
+      ' • Bulk concessions: ' + formatMoney(p.bulk) + (bulkRequested ? ' ($' + Number(RoxyEB.bulkItemPrice || 3).toFixed(2) + ' each)' : '') +
+      '</div>'
     );
 
     var dateStr = $('#roxy-eb-modal').data('dateStr');
@@ -252,6 +276,27 @@
     $(document).on('keydown', function(e){ if(e.key === 'Escape') closeModal(); });
 
     $(document).on('change', '#roxy-eb-extra-hours, input[name="guest_count"], #roxy-eb-pizza-requested, input[name="pizza_quantity"], #roxy-eb-payment-method, #roxy-eb-bulk-concessions-requested, input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', updatePricingUI);
+    $(document).on('focus', 'input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', function(){
+      $(this).data('roxyPrevVal', $(this).val());
+    });
+    $(document).on('keydown', 'input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', function(e){
+      if (e.key === 'ArrowUp' && Number($(this).val() || 0) === 0) {
+        e.preventDefault();
+        $(this).val('25').trigger('change');
+      }
+    });
+    $(document).on('change', 'input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', function(){
+      maybeJumpBulkQty($(this), $(this).data('roxyPrevVal'));
+      $(this).data('roxyPrevVal', $(this).val());
+      updatePricingUI();
+    });
+    $(document).on('blur', 'input[name="bulk_popcorn_qty"], input[name="bulk_soda_qty"]', function(){
+      var coerced = coerceBulkQtyValue($(this).val());
+      if (coerced !== $(this).val()) {
+        $(this).val(coerced);
+      }
+      updatePricingUI();
+    });
     $(document).on('change', '#roxy-eb-event-format', function(){ toggleFormatFields(); });
     $(document).on('change', '#roxy-eb-customer-type', function(){ toggleCustomerFields(); updatePricingUI(); });
     $(document).on('change', '#roxy-eb-pizza-requested', function(){ togglePizzaFields(); updatePricingUI(); });

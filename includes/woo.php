@@ -298,6 +298,10 @@ function roxy_eb_normalize_booking_payload($payload) {
     $pizza_quantity = $pizza_requested ? max(1, intval($payload['pizza_quantity'] ?? 0)) : 0;
     $pizza_order_details = $pizza_requested ? sanitize_textarea_field($payload['pizza_order_details'] ?? '') : '';
     $pizza_total = $pizza_requested ? ($pizza_quantity * intval($settings['pizza_price'] ?? 18)) : 0;
+    $bulk_requested = !empty($payload['bulk_concessions_requested']) ? 1 : 0;
+    $bulk_popcorn_qty = $bulk_requested ? intval($payload['bulk_popcorn_qty'] ?? 0) : 0;
+    $bulk_soda_qty = $bulk_requested ? intval($payload['bulk_soda_qty'] ?? 0) : 0;
+    $bulk_concessions_total = $bulk_requested ? (($bulk_popcorn_qty + $bulk_soda_qty) * intval($settings['bulk_item_price'] ?? 3)) : 0;
     $total = $base + $extra_price + $pizza_total + $bulk_concessions_total;
 
     return [
@@ -332,7 +336,7 @@ function roxy_eb_normalize_booking_payload($payload) {
         'bulk_popcorn_qty' => $bulk_popcorn_qty,
         'bulk_soda_qty' => $bulk_soda_qty,
         'bulk_concessions_total' => $bulk_concessions_total,
-        'total_price' => $total + $bulk_concessions_total,
+        'total_price' => $total,
     ];
 }
 
