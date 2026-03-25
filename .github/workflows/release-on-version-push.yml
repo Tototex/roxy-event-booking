@@ -90,19 +90,17 @@ jobs:
           NEW_VERSION="${NEW_TAG#v}"
           LATEST_VERSION="${LATEST_TAG#v}"
 
-          python3 - <<'PY' "$NEW_VERSION" "$LATEST_VERSION"
-import sys
-from packaging.version import Version
+          if [[ "$NEW_VERSION" == "$LATEST_VERSION" ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-new_version = Version(sys.argv[1])
-latest_version = Version(sys.argv[2])
-
-if new_version > latest_version:
-    print("should_release=true")
-else:
-    print("should_release=false")
-PY
-          >> "$GITHUB_OUTPUT"
+          HIGHEST="$(printf '%s\n%s\n' "$LATEST_VERSION" "$NEW_VERSION" | sort -V | tail -n1)"
+          if [[ "$HIGHEST" == "$NEW_VERSION" ]]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Exit when no new version is present
         if: steps.compare.outputs.should_release != 'true'
@@ -144,7 +142,7 @@ PY
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = `${{ toJson(steps.version.outputs.tag) }}`.replace(/^"|"$/g, '');
+            const tag = "${{ steps.version.outputs.tag }}";
             const sha = context.sha;
 
             try {
